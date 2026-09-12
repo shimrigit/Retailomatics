@@ -69,7 +69,7 @@ poagent_render_head("POAgent – פריטים: {$supplierId}", 780);
 </div>
 
 <label>פריטים שנבחרו <span id="picked_count" class="item-count-badge">0</span></label>
-<table id="picked_table">
+<table id="picked_table" class="responsive-table">
     <thead>
         <tr><th>ברקוד</th><th>שם פריט</th><th>מחיר</th><th>כמות</th><th></th></tr>
     </thead>
@@ -122,15 +122,19 @@ poagent_render_head("POAgent – פריטים: {$supplierId}", 780);
             const tr = document.createElement('tr');
 
             const tdBarcode = document.createElement('td');
+            tdBarcode.dataset.label = 'ברקוד';
             tdBarcode.textContent = item.barcode;
 
             const tdName = document.createElement('td');
+            tdName.dataset.label = 'שם פריט';
             tdName.textContent = item.name;
 
             const tdPrice = document.createElement('td');
+            tdPrice.dataset.label = 'מחיר';
             tdPrice.textContent = formatPrice(item.price_agorot);
 
             const tdQty = document.createElement('td');
+            tdQty.dataset.label = 'כמות';
             const qtyInput = document.createElement('input');
             qtyInput.type = 'number';
             qtyInput.className = 'qty';

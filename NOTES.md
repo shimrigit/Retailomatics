@@ -6,6 +6,26 @@
 
 ---
 
+## Recent Updates (September 6, 2026)
+
+### `whatsapp_app/` — named+enforced allowlist, `WaClient::list()`; POAgent PO session over WhatsApp
+
+- **`apps.json`** `allowed_senders` entries may now be `{ "number", "name" }` objects (bare
+  strings still work). `poagent` is now `allowlist_mode: "enforced"` — an unlisted number gets no
+  reply. `WaRouter` gained `allowedNumbers()` / `senderNameFor()`; the normalized event carries
+  `allowlist_name` (its `normalizeEvent()` first arg changed `string $appId` → `array $app`).
+- **`WaClient::list()`** — interactive list message (up to 10 rows) for menus with more than 3
+  options, alongside the existing `text()` / `buttons()`. (Added for the in-chat menu; currently
+  unused after the pivot to a web link, kept as generic client capability.)
+- **POAgent WhatsApp bot** is now a **mobile web launcher**: any inbound message → a greeting +
+  a short-lived signed link into the real PO web pages (`POAgent/m/?t=<token>`), authenticated as
+  the sender's phone number (= the PO's `generator_id`). No PO flow in chat. `main_menu.php` is
+  now audience-aware (mobile = create-PO / history / logout only). An earlier in-chat
+  conversational flow was built then parked (`POAgent/whatsapp/po_flow.php`, unwired). Full detail
+  in `POAgent/POAgentNotes.md` §9. NP is untouched.
+
+---
+
 ## Recent Updates (September 2, 2026)
 
 ### `whatsapp_app/` — multi-app router in front of the single Meta webhook

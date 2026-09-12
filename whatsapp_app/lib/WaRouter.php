@@ -80,7 +80,7 @@ class WaRouter
                 $contacts = self::indexContacts($value['contacts'] ?? []);
 
                 foreach ($messages as $message) {
-                    $event = self::normalizeEvent($app['id'], $metadata, $contacts, $message);
+                    $event = self::normalizeEvent($app, $metadata, $contacts, $message);
 
                     if (!self::isAllowed($app, $event['from'])) {
                         self::log([
@@ -182,11 +182,45 @@ class WaRouter
         if ($mode !== 'enforced') {
             return true;
         }
-        $allowed = array_map(
-            fn($n) => preg_replace('/\D/', '', (string) $n),
-            $app['allowed_senders'] ?? []
-        );
-        return $from !== '' && in_array($from, $allowed, true);
+        return $from !== '' && in_array($from, self::allowedNumbers($app), true);
+    }
+
+    /**
+     * Digits-only list of permitted wa_ids. An allowed_senders entry may be a
+     * bare string ("972...") or an object ({"number":"972...","name":"..."}) —
+     * both are accepted, so a registry can move to named entries without a
+     * router change.
+     */
+    private static function allowedNumbers(array $app): array
+    {
+        $out = [];
+        foreach ($app['allowed_senders'] ?? [] as $entry) {
+            $num = is_array($entry) ? ($entry['number'] ?? '') : $entry;
+            $num = preg_replace('/\D/', '', (string) $num);
+            if ($num !== '') {
+                $out[] = $num;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * The name a registry associates with this sender's number, or '' if the
+     * entry is a bare string / not listed. Surfaced to handlers as
+     * event['allowlist_name'] — POAgent uses it as the PO generator_id.
+     */
+    private static function senderNameFor(array $app, string $from): string
+    {
+        foreach ($app['allowed_senders'] ?? [] as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $num = preg_replace('/\D/', '', (string) ($entry['number'] ?? ''));
+            if ($num !== '' && $num === $from) {
+                return trim((string) ($entry['name'] ?? ''));
+            }
+        }
+        return '';
     }
 
     private static function loadHandlerFile(array $app): void
@@ -245,8 +279,9 @@ class WaRouter
      *   reply_id                  string   interactive button/list reply id, '' otherwise
      *   raw_message               array    the untouched message object
      *   session                  ?array   current WaSessionStore record for this wa_id, or null
+     *   allowlist_name            string   name the registry maps to this sender's number, '' if none
      */
-    private static function normalizeEvent(string $appId, array $metadata, array $contacts, array $message): array
+    private static function normalizeEvent(array $app, array $metadata, array $contacts, array $message): array
     {
         $type  = (string) ($message['type'] ?? '');
         $from  = preg_replace('/\D/', '', (string) ($message['from'] ?? ''));
@@ -254,7 +289,7 @@ class WaRouter
         [$text, $replyId] = self::extractText($message);
 
         return [
-            'app_id'                   => $appId,
+            'app_id'                   => $app['id'] ?? '',
             'business_phone_number_id' => (string) ($metadata['phone_number_id'] ?? ''),
             'business_display_number'  => preg_replace('/\D/', '', (string) ($metadata['display_phone_number'] ?? '')),
             'from'                     => $from,
@@ -267,6 +302,7 @@ class WaRouter
             'reply_id'                 => $replyId,
             'raw_message'              => $message,
             'session'                  => WaSessionStore::get($from),
+            'allowlist_name'           => self::senderNameFor($app, $from),
         ];
     }
 

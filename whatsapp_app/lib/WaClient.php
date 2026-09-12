@@ -55,6 +55,58 @@ class WaClient
         ]);
     }
 
+    /**
+     * Send an interactive list message — a single tappable section with up to
+     * 10 rows. Use when there are more than 3 options (buttons() caps at 3).
+     * $rows: [ ['id' => 'menu_po_new', 'title' => 'צור הזמנה', 'description' => '...'], ... ]
+     *   - title       ≤ 24 chars (Meta limit), required
+     *   - description ≤ 72 chars, optional
+     * $buttonLabel is the label on the button that opens the list (≤ 20 chars).
+     * The chosen row comes back as an interactive `list_reply` — WaRouter maps
+     * it to event['reply_id'] (the row id) and event['text'] (the row title).
+     */
+    public static function list(
+        string $phoneNumberId,
+        string $to,
+        string $bodyText,
+        array $rows,
+        string $buttonLabel = 'בחירה',
+        string $sectionTitle = ''
+    ): bool {
+        $listRows = [];
+        foreach (array_slice($rows, 0, 10) as $r) {
+            $row = [
+                'id'    => (string) ($r['id'] ?? ''),
+                'title' => mb_substr((string) ($r['title'] ?? ''), 0, 24),
+            ];
+            $desc = trim((string) ($r['description'] ?? ''));
+            if ($desc !== '') {
+                $row['description'] = mb_substr($desc, 0, 72);
+            }
+            $listRows[] = $row;
+        }
+
+        $section = ['rows' => $listRows];
+        if ($sectionTitle !== '') {
+            $section['title'] = mb_substr($sectionTitle, 0, 24);
+        }
+
+        return self::send($phoneNumberId, [
+            'messaging_product' => 'whatsapp',
+            'recipient_type'    => 'individual',
+            'to'                => $to,
+            'type'              => 'interactive',
+            'interactive'       => [
+                'type'   => 'list',
+                'body'   => ['text' => $bodyText],
+                'action' => [
+                    'button'   => mb_substr($buttonLabel, 0, 20),
+                    'sections' => [$section],
+                ],
+            ],
+        ]);
+    }
+
     // ── internals ───────────────────────────────────────────────────────────
 
     private static function send(string $phoneNumberId, array $payload): bool

@@ -2,7 +2,7 @@
 
 **Project Location:** `C:\xampp\htdocs\website\POAgent`
 **Spec:** `pre-demo` build, based on *Purchase Order & Delivery Note Matching System — Pre-Demo Development Spec (v3)* (Priority DB → 3 local directories, WhatsApp bot → web interface).
-**Last Updated:** September 6, 2026
+**Last Updated:** September 12, 2026
 **Status:** Phase 1 complete (PO creation flow). DN ingestion pipeline complete end-to-end,
 including the human-in-the-loop Review screen and DN/VS visibility from the history list — photo
 import, OCR, manual correction, Diff Engine/VS generation, status transitions, and now DN/VS
@@ -836,3 +836,155 @@ test data - replying `A`/`B` to it will still work correctly via the typed fallb
 - The real PO-creation and DN-scanning logic behind the menu (this session's explicit "later").
 - `X-Hub-Signature-256` verification in `webhook.php` (currently any POST is trusted).
 - Move the outbound send off the webhook request (queue / worker).
+
+### Feature — real PO session over WhatsApp (Sept 6, 2026)
+Replaces the A/B stub with the full mobile PO flow, driving the **same** `POStore` /
+`SupplierStore` the laptop screens use — a PO created from the phone is byte-identical in shape to
+a laptop one and shows up in `po_list.php` / `po_view.php` with no special-casing.
+
+**Identity (apps.json + WaRouter):**
+- `allowed_senders` entries may now be `{ "number": "...", "name": "..." }` objects (bare strings
+  still accepted). `WaRouter::allowedNumbers()` digit-strips either shape; new
+  `WaRouter::senderNameFor()` resolves the name and `normalizeEvent()` surfaces it as
+  `event['allowlist_name']`. `normalizeEvent()`'s first param changed `string $appId` → `array $app`.
+- `poagent` flipped to `allowlist_mode: "enforced"` with one seeded tester
+  (`972546997729` → name `שמרי` — **edit the name / add testers in `apps.json`; an unlisted number
+  now gets no reply at all**).
+- **The PO's `generator_id` is the sender's phone number** (`$from`, digits) — the unique, stable
+  identity, and the hook a later step will use to match a laptop user to their phone. The
+  `allowlist_name` is only a **display nickname** for greeting text / the "נוצר ע"י" line,
+  carried on the session as `data.user_name`; it may change or repeat and is never stored as
+  identity. `poagent_wa_list_pos_for($from)` filters history by exact `generator_id` in the PO's
+  JSON body. (A digits-only `generator_id` also sanitizes cleanly into the `core_name` —
+  `972546997729_Osem_<ts>_PO#####` — unlike a Hebrew name, which `poagent_sanitize_segment`
+  would strip to `x`.)
+
+**Next step this sets up:** authenticating a laptop user by a message from their phone — the
+phone-number `generator_id` written here is what that match will key on.
+
+**Menu (bot.php):** first message → a WhatsApp **interactive list** (new `WaClient::list()`, since
+`buttons()` caps at 3) mirroring the laptop `main_menu.php` minus "switch user":
+`צור הזמנה חדשה` / `העלה תעודת משלוח` / `היסטוריית הזמנות` / `סיים תהליך`. DN is intentionally
+**not** built on mobile — that option replies "use the browser" and returns to the menu. Typed
+`1`–`4` / keyword fallback works for clients that render the list as plain text.
+
+**PO conversation (`POAgent/whatsapp/po_flow.php`, new — bot.php is now just dispatch + menu +
+idle sweep + logging):** states `main_menu → po_pick_supplier → po_build → po_confirm`.
+- `po_pick_supplier` — supplier list (interactive list; `data.supplier_list` = ordered ids for the
+  typed-number fallback).
+- `po_build` — free-text search (prefix-ranked-above-substring, same ranking as `po_items.php`'s
+  JS typeahead, capped at 9 shown; `data.last_results` = ordered barcodes). Reply `<n>` or
+  `<n>*<qty>` (also `x` / `×` / space) adds result #n to `data.cart` (`{barcode: qty}`, qty
+  merges on repeat). Only treated as a pick when `<n>` indexes the result set — otherwise it's a
+  search, so pasting a full barcode still works. `סיום` → confirm, `ביטול`/`תפריט` → menu.
+- `po_confirm` — server-side re-derived summary + 3 reply buttons
+  (`po_confirm_yes`/`_add`/`_no`). `אשר` → `POStore::createPO($userName, $supplierId, $items)`
+  (prices/names re-derived from the catalog by barcode one last time — cart never trusted for
+  pricing), success text, back to the menu.
+- History option → `poagent_wa_format_history()` (this user's own POs, newest-first, ≤10).
+- Every inbound message refreshes the idle-timeout fields via `poagent_wa_set_state()`, so the
+  existing 5-min-reminder / +1-min-close sweep keeps working unchanged.
+
+**Verified:** `php -l` clean on all 4 touched/added files. Three functional tests (real
+`WaSessionStore` + real `POStore`/`SupplierStore`, WaClient tokenless so nothing sends):
+(1) full flow `first-contact → menu → pick supplier (list id) → search → add 1*2 → search another
+by barcode → add → סיום → confirm (button id)` — PO written to `POdir/` with
+`generator_id` = the sender's **phone number** (core_name `972555550001_Osem_…_PO#####`), both
+line prices matching the catalog exactly, qty-merge correct, session back to `main_menu`, cart
+cleared; history option (`poagent_wa_list_pos_for($from)`) then lists it; `סיים תהליך` clears the
+session. Test PO records deleted afterward (counter left advanced — harmless gap).
+(2) `WaRouter::isAllowed()`/`senderNameFor()` reflection test — object + bare-string entries,
+digit-stripping, enforced-drop, name resolution, plus the real `apps.json` (enforced, tester
+listed). (3) `WaRouter::handle()` integration against synthetic Meta payloads — listed number
+dispatches + opens a `main_menu` session with the resolved name, unlisted number silently dropped
+(logged `unauthorized`, no session), NP line still `no_handler` with no crash. Synthetic sessions
+cleaned up after.
+
+**Still not done:** real DN scanning on mobile; `X-Hub-Signature-256` in `webhook.php`; outbound
+send still on the webhook request; `>10` suppliers would overflow the interactive list (only the
+first 10 are tappable — a typed exact supplier name still works).
+
+### Pivot — mobile users drive the real web pages via a WhatsApp login link (Sept 6, 2026)
+Explicit change of direction: **no in-chat PO flow.** The phone user opens the actual PO web
+screens (`po_supplier.php` → … → `po_create.php`, `po_list.php`) in their mobile browser,
+authenticated as their phone number. The chat conversation from the entry above is **parked** —
+`po_flow.php` stays on disk with a "NOT WIRED IN" banner, `bot.php` no longer requires it, and the
+idle-session sweep (`poagent_whatsapp_sweep_idle_sessions`, still called by `session_sweeper.php`)
+goes dormant since the bot now writes no sessions.
+
+**Reachability:** Apache already `Listen 80` on all interfaces with `htdocs` = `Require all
+granted`, so the pages are served on the LAN (`http://<PC-IP>/website/POAgent/…`, needs a Windows
+Firewall rule for TCP 80) and on whatever public host already fronts `webhook.php` for Meta
+(same Apache — `https://<that-host>/website/POAgent/…`). `localhost` from the phone does **not**
+work (that's the phone itself).
+
+**Token login (`POAgent/whatsapp/mobile_link.php`, new):**
+- `poagent_wa_issue_token($phone, $name, $ttl=900)` — `base64url(json{p,n,iat,exp}) . "." .
+  base64url(HMAC-SHA256(body, secret))`. Secret auto-generated once into
+  `POAgent/POcounter/.link_secret` (that dir is already git-ignored) — zero config.
+- `poagent_wa_verify_token()` — structure + `hash_equals` signature check + `exp` check; returns
+  `['phone','name','exp']` or `null`. 60 s minimum TTL floor.
+- `poagent_wa_mobile_link()` — `base_url + app_web_base + /POAgent/m/?t=<token>`. `base_url`:
+  `POAGENT_WA_LINK_BASE_URL` env → `POAgent/POcounter/.link_base_url` file → the host of the
+  webhook request (`X-Forwarded-Host`/`Host`). `app_web_base` (`/website`) derived from the
+  webhook `SCRIPT_NAME`. Drop a one-line `.link_base_url` file if tunnel host-detection is wrong.
+- Not one-time-use — short TTL is the mitigation for a pre-demo (noted for later).
+
+**Bot (`bot.php`, rewritten):** any actionable inbound → greeting + a fresh link, `WaClient::text`,
+log `mobile_link_sent`. No session. `allowlist_mode: "enforced"` still gates who gets a link.
+
+**Landing (`POAgent/m/`, new):**
+- `index.php` — verifies `?t=`; bad/expired → a Hebrew "ask the bot for a new link" page; valid →
+  `session_set_cookie_params(lifetime 86400, SameSite=Lax)`, `session_regenerate_id(true)`, sets
+  `$_SESSION['poagent_generator_id'] = <phone>` + `poagent_display_name` + `poagent_mobile=true`,
+  redirects to `../main_menu.php`.
+- `logout.php` — clears the session.
+
+**`main_menu.php`** is now audience-aware: `poagent_mobile` in session → greet by nickname, show
+only **צור הזמנת רכש** / **היסטוריית הזמנות** (`po_list.php?mine=1`) / **יציאה**; desktop is
+unchanged (adds Upload-DN + "switch user"). Downstream PO screens needed **no change** —
+`poagent_require_generator()` returns the phone number, so `POStore::createPO()` stamps
+`generator_id` = phone and `core_name` = `972…_<supplier>_<ts>_PO#####` exactly like a desktop PO.
+
+**Verified:** `php -l` clean on all 6 touched/added files. Unit test — token round-trip incl.
+Hebrew name, tamper/malformed/expired all reject, link URL shape + embedded token verifies,
+`.link_base_url` file override wins, bot handler sends a link and writes no session, `bot.php` has
+no `require` of `po_flow.php`. Live HTTP (Apache running) — bad `?t=` → 200 + the invalid-link
+page; good `?t=` → 302 to `../main_menu.php` with the 24 h `SameSite=Lax` cookie; following it,
+`main_menu.php` renders the 3-item mobile menu (no DN, no "switch user"); `po_supplier.php` /
+`po_list.php?mine=1` load under that session; a `po_create.php` POST wrote
+`972546997729_Osem_…_PO00019_open.json` with `generator_id=972546997729` — then deleted (counter
+left advanced).
+
+**Still not done:** one-time-use tokens; a Firewall rule / documented public URL is a deploy step,
+not code; `index.php` (desktop user picker) is still open on the public host and lets anyone
+become user1/2/3 — lock it down before real exposure; PHP session GC (`gc_maxlifetime` default
+1440 s on the non-`m/` pages) could still reap a mobile session earlier than 24 h under load.
+
+### Feature — mobile-friendly responsive UI pass (Sept 12, 2026)
+**Why:** the mobile web login link (dated entry above) worked functionally, but the user reported
+the screens "look the same as on the computer" and feel less friendly on a phone.
+**Root cause found first:** `poagent_render_head()` never emitted a `<meta name="viewport">` tag —
+with none present, mobile browsers render the page assuming a ~980px desktop layout and shrink it
+to fit, so every screen was effectively a zoomed-out desktop page rather than a real phone layout.
+One-line fix, outsized effect.
+**What else changed, all in the shared shell so every screen picks it up at once:**
+- `lib/ui_common.php` — added the viewport meta tag; added a `@media (max-width: 640px)` block:
+  tighter card padding, smaller headings, larger-relative form/button sizing for touch.
+- New `.responsive-table` mechanism (same media query) — a `<table class="responsive-table">` with
+  `data-label="..."` on each `<td>` becomes a stack of bordered cards (one per row, label above
+  value) below the breakpoint, instead of a cramped multi-column table or sideways scrolling.
+  Applied to all 4 shared table renderers in `ui_common.php` (`poagent_render_po_detail()`,
+  `poagent_render_dn_detail()`, `poagent_render_vs_detail()`'s two tables,
+  `poagent_render_total_check()`), plus `po_confirm.php`'s order-summary table and
+  `po_list.php`'s history table.
+- `po_list.php` — the "משתמש" column is now hidden entirely when `$_SESSION['poagent_mobile']` is
+  set, since mobile always browses with `?mine=1` already (every row is the same user there).
+- `po_items.php` — the JS-built "picked items" table (`renderPicked()`) now stamps
+  `dataset.label` on each created `<td>` so it gets the same card-stack treatment on phone width.
+- `po_supplier.php` and `main_menu.php` needed no changes (already just a `<select>` / full-width
+  buttons). `po_view.php`'s multi-panel flex layout was left as-is — its existing `flex-wrap`
+  already stacks reasonably at phone width; revisit if it still feels off there too.
+**Verified:** `php -l` clean on all 4 touched files (`lib/ui_common.php`, `po_list.php`,
+`po_items.php`, `po_confirm.php`). User tested live on their own phone after the change and
+confirmed it now looks right.

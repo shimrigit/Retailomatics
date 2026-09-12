@@ -13,6 +13,7 @@ function poagent_render_head(string $title, int $cardWidth = 690): void
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= htmlspecialchars($title) ?></title>
     <style>
         body { font-family: Arial, sans-serif; background: #f4f4f4; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; margin: 0; padding: 40px 0; }
@@ -80,6 +81,45 @@ function poagent_render_head(string $title, int $cardWidth = 690): void
         .item-count-badge {
             display: inline-block; background: #2575a8; color: #fff; border-radius: 12px;
             padding: 2px 10px; font-size: 14px; margin-inline-start: 8px;
+        }
+
+        /* Phone-width layout — same markup everywhere, tighter chrome so the
+           real device viewport (not a shrunk-down desktop page, now that the
+           viewport meta tag above is in place) doesn't feel like the laptop
+           screen. Desktop styles above are untouched past this breakpoint. */
+        @media (max-width: 640px) {
+            body { padding: 16px 0; }
+            .card { padding: 22px 16px; border-radius: 8px; }
+            h2 { font-size: 22px; margin-bottom: 22px; }
+            h3 { font-size: 19px; }
+            h4 { font-size: 16px; }
+            label { font-size: 16px; }
+            select, input[type="text"], input[type="number"] { font-size: 16px; padding: 11px; margin-bottom: 16px; }
+            button, .btn { font-size: 18px; padding: 15px; }
+            .switch-opt label { font-size: 15px; padding: 11px; }
+
+            /* Any table wearing this class becomes a stack of cards, one per
+               row, label-above-value — a plain <table> with several columns
+               is unreadable at phone width (tiny text, or sideways
+               scrolling). Requires each <td> to carry data-label="...". */
+            table.responsive-table thead { display: none; }
+            table.responsive-table, table.responsive-table tbody,
+            table.responsive-table tr, table.responsive-table td {
+                display: block; width: 100%; box-sizing: border-box;
+            }
+            table.responsive-table { border: none; margin-bottom: 18px; }
+            table.responsive-table tr {
+                border: 1px solid #ddd; border-radius: 8px; margin-bottom: 12px;
+                background: #fff; overflow: hidden;
+            }
+            table.responsive-table td {
+                border: none; border-bottom: 1px solid #f2f2f2; padding: 9px 12px;
+            }
+            table.responsive-table td:last-child { border-bottom: none; }
+            table.responsive-table td[data-label]::before {
+                content: attr(data-label); display: block; font-size: 12px;
+                font-weight: bold; color: #888; margin-bottom: 2px;
+            }
         }
     </style>
 </head>
@@ -243,21 +283,21 @@ function poagent_render_po_detail(array $record): void
     </p>
     <p class="muted"><strong>שם קובץ (core name):</strong> <?= htmlspecialchars($record['core_name'] ?? '') ?></p>
 
-    <table>
+    <table class="responsive-table">
         <tr><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th><th>סה"כ</th></tr>
         <?php foreach ($items as $line): ?>
         <?php $lineTotal = (int) ($line['qty'] ?? 0) * (int) ($line['unit_price_agorot'] ?? 0); ?>
         <tr>
-            <td><?= htmlspecialchars($line['barcode'] ?? '') ?></td>
-            <td><?= htmlspecialchars($line['name'] ?? '') ?></td>
-            <td><?= (int) ($line['qty'] ?? 0) ?></td>
-            <td><?= number_format(((int) ($line['unit_price_agorot'] ?? 0)) / 100, 2) ?> ₪</td>
-            <td><?= number_format($lineTotal / 100, 2) ?> ₪</td>
+            <td data-label="ברקוד"><?= htmlspecialchars($line['barcode'] ?? '') ?></td>
+            <td data-label="שם פריט"><?= htmlspecialchars($line['name'] ?? '') ?></td>
+            <td data-label="כמות"><?= (int) ($line['qty'] ?? 0) ?></td>
+            <td data-label="מחיר יח'"><?= number_format(((int) ($line['unit_price_agorot'] ?? 0)) / 100, 2) ?> ₪</td>
+            <td data-label="סה&quot;כ"><?= number_format($lineTotal / 100, 2) ?> ₪</td>
         </tr>
         <?php endforeach; ?>
         <tr>
             <td colspan="4" style="text-align:left"><strong>סה"כ להזמנה</strong></td>
-            <td><strong><?= number_format($totalAgorot / 100, 2) ?> ₪</strong></td>
+            <td data-label="סה&quot;כ להזמנה"><strong><?= number_format($totalAgorot / 100, 2) ?> ₪</strong></td>
         </tr>
     </table>
     <?php
@@ -296,14 +336,14 @@ function poagent_render_dn_detail(array $dn): void
         <p style="color:#c0392b">⚠️ חלק מהשדות לא עברו את בדיקת התקינות (מסומנים למטה באדום).</p>
     <?php endif; ?>
 
-    <table>
+    <table class="responsive-table">
         <tr><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th></tr>
         <?php foreach ($dn['items'] ?? [] as $item): ?>
         <tr>
-            <td style="<?= !empty($item['barcode_invalid']) ? 'color:#c0392b;font-weight:bold' : '' ?>"><?= htmlspecialchars($item['barcode'] ?? '') ?></td>
-            <td><?= htmlspecialchars($item['name'] ?? '') ?></td>
-            <td style="<?= !empty($item['qty_invalid']) ? 'color:#c0392b;font-weight:bold' : '' ?>"><?= htmlspecialchars((string) ($item['qty'] ?? 0)) ?></td>
-            <td style="<?= !empty($item['price_invalid']) ? 'color:#c0392b;font-weight:bold' : '' ?>"><?= number_format((float) ($item['unit_price'] ?? 0), 2) ?> ₪</td>
+            <td data-label="ברקוד" style="<?= !empty($item['barcode_invalid']) ? 'color:#c0392b;font-weight:bold' : '' ?>"><?= htmlspecialchars($item['barcode'] ?? '') ?></td>
+            <td data-label="שם פריט"><?= htmlspecialchars($item['name'] ?? '') ?></td>
+            <td data-label="כמות" style="<?= !empty($item['qty_invalid']) ? 'color:#c0392b;font-weight:bold' : '' ?>"><?= htmlspecialchars((string) ($item['qty'] ?? 0)) ?></td>
+            <td data-label="מחיר יח'" style="<?= !empty($item['price_invalid']) ? 'color:#c0392b;font-weight:bold' : '' ?>"><?= number_format((float) ($item['unit_price'] ?? 0), 2) ?> ₪</td>
         </tr>
         <?php endforeach; ?>
     </table>
@@ -327,27 +367,27 @@ function poagent_render_vs_detail(array $vs): void
     <?php if (empty($vs['line_items'])): ?>
         <p class="muted">לא נמצאו פריטים תואמים להזמנה בתעודה זו.</p>
     <?php else: ?>
-    <table>
+    <table class="responsive-table">
         <tr>
             <th>ברקוד</th><th>נותר לפני</th><th>כמות בתעודה</th><th>הפרש כמות</th>
             <th>מחיר בהזמנה</th><th>מחיר בתעודה</th><th>הפרש מחיר</th>
         </tr>
         <?php foreach ($vs['line_items'] as $line): ?>
         <tr<?= !empty($line['not_delivered']) ? ' style="background:#fdecea"' : '' ?>>
-            <td>
+            <td data-label="ברקוד">
                 <?= htmlspecialchars($line['barcode']) ?>
                 <?php if (!empty($line['not_delivered'])): ?>
                     <br><span style="color:#c0392b;font-size:13px">⚠ לא נכלל בתעודה זו</span>
                 <?php endif; ?>
             </td>
-            <td><?= (int) $line['po_qty_remaining_before'] ?></td>
-            <td><?= (int) $line['dn_qty'] ?></td>
-            <td style="<?= $line['qty_flagged'] ? 'color:#c0392b;font-weight:bold' : 'color:#2a7d2a' ?>">
+            <td data-label="נותר לפני"><?= (int) $line['po_qty_remaining_before'] ?></td>
+            <td data-label="כמות בתעודה"><?= (int) $line['dn_qty'] ?></td>
+            <td data-label="הפרש כמות" style="<?= $line['qty_flagged'] ? 'color:#c0392b;font-weight:bold' : 'color:#2a7d2a' ?>">
                 <?= $line['qty_diff'] > 0 ? '+' : '' ?><?= (int) $line['qty_diff'] ?>
             </td>
-            <td><?= poagent_agorot_to_ils((int) $line['po_price_agorot']) ?></td>
-            <td><?= empty($line['not_delivered']) ? poagent_agorot_to_ils((int) $line['dn_price_agorot']) : '—' ?></td>
-            <td style="<?= $line['price_flagged'] ? 'color:#c0392b;font-weight:bold' : 'color:#2a7d2a' ?>">
+            <td data-label="מחיר בהזמנה"><?= poagent_agorot_to_ils((int) $line['po_price_agorot']) ?></td>
+            <td data-label="מחיר בתעודה"><?= empty($line['not_delivered']) ? poagent_agorot_to_ils((int) $line['dn_price_agorot']) : '—' ?></td>
+            <td data-label="הפרש מחיר" style="<?= $line['price_flagged'] ? 'color:#c0392b;font-weight:bold' : 'color:#2a7d2a' ?>">
                 <?= empty($line['not_delivered']) ? (($line['price_diff_agorot'] > 0 ? '+' : '') . poagent_agorot_to_ils((int) $line['price_diff_agorot'])) : '—' ?>
             </td>
         </tr>
@@ -357,13 +397,13 @@ function poagent_render_vs_detail(array $vs): void
 
     <?php if (!empty($vs['unmatched_dn_items'])): ?>
         <h4 style="color:#c0392b">פריטים בתעודה שאינם בהזמנה</h4>
-        <table>
+        <table class="responsive-table">
             <tr><th>ברקוד</th><th>כמות</th><th>הערה</th></tr>
             <?php foreach ($vs['unmatched_dn_items'] as $u): ?>
             <tr>
-                <td><?= htmlspecialchars($u['barcode']) ?></td>
-                <td><?= (int) $u['dn_qty'] ?></td>
-                <td><?= htmlspecialchars($u['note']) ?></td>
+                <td data-label="ברקוד"><?= htmlspecialchars($u['barcode']) ?></td>
+                <td data-label="כמות"><?= (int) $u['dn_qty'] ?></td>
+                <td data-label="הערה"><?= htmlspecialchars($u['note']) ?></td>
             </tr>
             <?php endforeach; ?>
         </table>
@@ -392,14 +432,14 @@ function poagent_render_total_check(array $totalCheck): void
     $declared = $totalCheck['dn_declared_total_agorot'] ?? null;
     ?>
     <h4 style="margin-top:24px;color:#555">🧮 בדיקת סה"כ</h4>
-    <table>
+    <table class="responsive-table">
         <tr><th>סה"כ צפוי (לפי ההזמנה)</th><th>סה"כ מוצהר בתעודה (OCR)</th><th>סה"כ מחושב לפי שורות התעודה</th></tr>
         <tr>
-            <td><?= poagent_agorot_to_ils((int) $totalCheck['po_expected_total_agorot']) ?></td>
-            <td style="<?= $totalCheck['po_vs_declared_flagged'] ? 'color:#c0392b;font-weight:bold' : '' ?>">
+            <td data-label="סה&quot;כ צפוי (לפי ההזמנה)"><?= poagent_agorot_to_ils((int) $totalCheck['po_expected_total_agorot']) ?></td>
+            <td data-label="סה&quot;כ מוצהר בתעודה (OCR)" style="<?= $totalCheck['po_vs_declared_flagged'] ? 'color:#c0392b;font-weight:bold' : '' ?>">
                 <?= $declared !== null ? poagent_agorot_to_ils((int) $declared) : '— לא זוהה בתמונה' ?>
             </td>
-            <td><?= poagent_agorot_to_ils((int) $totalCheck['dn_computed_total_agorot']) ?></td>
+            <td data-label="סה&quot;כ מחושב לפי שורות התעודה"><?= poagent_agorot_to_ils((int) $totalCheck['dn_computed_total_agorot']) ?></td>
         </tr>
     </table>
     <?php if ($declared === null): ?>

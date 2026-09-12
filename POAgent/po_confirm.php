@@ -50,20 +50,20 @@ poagent_render_head("POAgent – אישור הזמנה: {$supplierId}");
 ?>
 <h2>אישור הזמנת רכש — <?= htmlspecialchars($supplierId) ?></h2>
 
-<table>
+<table class="responsive-table">
     <tr><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th><th>סה"כ</th></tr>
     <?php foreach ($selected as $line): $lineTotal = $line['qty'] * $line['unit_price_agorot']; ?>
     <tr>
-        <td><?= htmlspecialchars($line['barcode']) ?></td>
-        <td><?= htmlspecialchars($line['name']) ?></td>
-        <td><?= (int) $line['qty'] ?></td>
-        <td><?= number_format($line['unit_price_agorot'] / 100, 2) ?> ₪</td>
-        <td><?= number_format($lineTotal / 100, 2) ?> ₪</td>
+        <td data-label="ברקוד"><?= htmlspecialchars($line['barcode']) ?></td>
+        <td data-label="שם פריט"><?= htmlspecialchars($line['name']) ?></td>
+        <td data-label="כמות"><?= (int) $line['qty'] ?></td>
+        <td data-label="מחיר יח'"><?= number_format($line['unit_price_agorot'] / 100, 2) ?> ₪</td>
+        <td data-label="סה&quot;כ"><?= number_format($lineTotal / 100, 2) ?> ₪</td>
     </tr>
     <?php endforeach; ?>
     <tr>
         <td colspan="4" style="text-align:left"><strong>סה"כ להזמנה</strong></td>
-        <td><strong><?= number_format($totalAgorot / 100, 2) ?> ₪</strong></td>
+        <td data-label="סה&quot;כ להזמנה"><strong><?= number_format($totalAgorot / 100, 2) ?> ₪</strong></td>
     </tr>
 </table>
 

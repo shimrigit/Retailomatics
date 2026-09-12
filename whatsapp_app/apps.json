@@ -1,6 +1,6 @@
 {
   "_comment": "WhatsApp app registry. The single Meta webhook (webhook.php) fans every event to WaRouter, which matches each event's business number against the rules below and calls the one matching app's handler. Separation is by phone_number_id / display_phone_number only. Add a phone number in Meta, add an entry here, drop in a handler file - no change to webhook.php or WaRouter.",
-  "_allowlist_comment": "Per-app sender gate, checked after routing, before the handler runs. allowlist_mode: 'open' (default, omit the key entirely for the old behavior) = anyone gets answered. 'enforced' = only wa_ids (digits, no +) in allowed_senders get answered; everyone else is silently dropped and logged as 'unauthorized'.",
+  "_allowlist_comment": "Per-app sender gate, checked after routing, before the handler runs. allowlist_mode: 'open' (default, omit the key entirely for the old behavior) = anyone gets answered. 'enforced' = only senders in allowed_senders get answered; everyone else is silently dropped and logged as 'unauthorized'. allowed_senders entries may be a bare number string ('972...') OR an object { \"number\": \"972...\", \"name\": \"...\" }. When an object with a name matches, WaRouter passes that name to the handler as event['allowlist_name']. In POAgent the name is only a DISPLAY nickname (greeting text) - the PO's generator_id / unique identity is the phone number itself. Edit the names here until the management UI exists.",
   "apps": [
     {
       "id": "poagent",
@@ -10,8 +10,10 @@
         "phone_number_id": ["1239615559241608"],
         "display_phone_number": ["972522649555"]
       },
-      "allowlist_mode": "open",
-      "allowed_senders": [],
+      "allowlist_mode": "enforced",
+      "allowed_senders": [
+        { "number": "972546997729", "name": "שמרי" }
+      ],
       "handler": {
         "file": "../POAgent/whatsapp/bot.php",
         "function": "poagent_whatsapp_handle_event"

@@ -30,7 +30,7 @@ poagent_render_head('POAgent – בחירת הזמנה לתעודת משלוח',
     <tr>
         <td><?= htmlspecialchars($po['unique_id'] ?? '') ?></td>
         <td><?= htmlspecialchars($po['supplier_id'] ?? '') ?></td>
-        <td><?= htmlspecialchars($po['generator_id'] ?? '') ?></td>
+        <td><?= htmlspecialchars(poagent_generator_display($po)) ?></td>
         <td><?= htmlspecialchars($po['date_generated'] ?? '') ?></td>
         <td><span class="badge <?= htmlspecialchars($po['status'] ?? '') ?>"><?= htmlspecialchars($po['status'] ?? '') ?></span></td>
         <td><?= count($po['items'] ?? []) ?></td>

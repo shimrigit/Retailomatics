@@ -107,6 +107,46 @@ class WaClient
         ]);
     }
 
+    /**
+     * Send an interactive "CTA URL" message — a body of plain text plus a
+     * single tappable button that opens $url. Unlike text() with a bare URL
+     * in the body, WhatsApp never prints the raw link in the chat bubble
+     * here; only $buttonText (≤20 chars, Meta's limit for this button) is
+     * visible, matching how a real business's messages look rather than a
+     * long tokenized URL wrapped across several lines.
+     */
+    public static function ctaUrl(
+        string $phoneNumberId,
+        string $to,
+        string $bodyText,
+        string $buttonText,
+        string $url,
+        ?string $footerText = null
+    ): bool {
+        $interactive = [
+            'type'   => 'cta_url',
+            'body'   => ['text' => $bodyText],
+            'action' => [
+                'name'       => 'cta_url',
+                'parameters' => [
+                    'display_text' => mb_substr($buttonText, 0, 20),
+                    'url'          => $url,
+                ],
+            ],
+        ];
+        if ($footerText !== null && trim($footerText) !== '') {
+            $interactive['footer'] = ['text' => mb_substr(trim($footerText), 0, 60)];
+        }
+
+        return self::send($phoneNumberId, [
+            'messaging_product' => 'whatsapp',
+            'recipient_type'    => 'individual',
+            'to'                => $to,
+            'type'              => 'interactive',
+            'interactive'       => $interactive,
+        ]);
+    }
+
     // ── internals ───────────────────────────────────────────────────────────
 
     private static function send(string $phoneNumberId, array $payload): bool

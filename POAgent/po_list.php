@@ -28,10 +28,12 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
     <p class="muted">אין הזמנות עדיין.</p>
 <?php else: ?>
 <table class="responsive-table">
+    <thead>
     <tr>
         <th>מס' הזמנה</th><th>ספק</th><?php if ($showUserColumn): ?><th>משתמש</th><?php endif; ?><th>נוצר ב</th><th>סטטוס</th><th>פריטים</th><th>סה"כ</th>
         <th>תעודות ודוחות</th>
     </tr>
+    </thead>
     <?php foreach ($records as $po): ?>
     <?php
         $coreName = $po['core_name'] ?? '';
@@ -43,7 +45,7 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
     <tr>
         <td data-label="מס' הזמנה"><?= htmlspecialchars($po['unique_id'] ?? '') ?></td>
         <td data-label="ספק"><?= htmlspecialchars($po['supplier_id'] ?? '') ?></td>
-        <?php if ($showUserColumn): ?><td data-label="משתמש"><?= htmlspecialchars($po['generator_id'] ?? '') ?></td><?php endif; ?>
+        <?php if ($showUserColumn): ?><td data-label="משתמש"><?= htmlspecialchars(poagent_generator_display($po)) ?></td><?php endif; ?>
         <td data-label="נוצר ב"><?= htmlspecialchars($po['date_generated'] ?? '') ?></td>
         <td data-label="סטטוס"><span class="badge <?= htmlspecialchars($po['status'] ?? '') ?>"><?= htmlspecialchars($po['status'] ?? '') ?></span></td>
         <td data-label="פריטים"><?= count($po['items'] ?? []) ?></td>

@@ -51,7 +51,7 @@ poagent_render_head("POAgent – אישור הזמנה: {$supplierId}");
 <h2>אישור הזמנת רכש — <?= htmlspecialchars($supplierId) ?></h2>
 
 <table class="responsive-table">
-    <tr><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th><th>סה"כ</th></tr>
+    <thead><tr><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th><th>סה"כ</th></tr></thead>
     <?php foreach ($selected as $line): $lineTotal = $line['qty'] * $line['unit_price_agorot']; ?>
     <tr>
         <td data-label="ברקוד"><?= htmlspecialchars($line['barcode']) ?></td>

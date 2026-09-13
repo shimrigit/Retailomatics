@@ -19,6 +19,16 @@ define('POAGENT_PODIR', __DIR__ . '/../POdir');
 define('POAGENT_COUNTER_DIR', __DIR__ . '/../POcounter');
 define('POAGENT_PO_COUNTER_FILE', POAGENT_COUNTER_DIR . '/.po_counter');
 
+// Cap on the human-readable name stored alongside generator_id (mobile POs
+// only — desktop's generator_id, "user1"/"user2"/"user3", is already
+// display-friendly and never gets a separate name). 40 chars: generous
+// compared to WhatsApp's own profile-name limit (25 chars) — the closest
+// "industry standard" reference, since this name usually originates as
+// either a WhatsApp contact name or the apps.json allowlist nickname — but
+// this renders on our own screens, not a WhatsApp UI element with WhatsApp's
+// tighter space constraints, so there's no reason to match it exactly.
+define('POAGENT_GENERATOR_NAME_MAX_CHARS', 40);
+
 class POStore
 {
     /** Atomically allocate the next PO##### id, e.g. "PO0004" (spec §8.2). */
@@ -59,8 +69,17 @@ class POStore
      * record (status "open"), returns the full record including core_name.
      *
      * $items: [ ['barcode'=>, 'name'=>, 'qty'=>, 'unit_price_agorot'=>], ... ]
+     *
+     * $generatorName is a human-readable display nickname (e.g. a WhatsApp
+     * contact/allowlist name for a mobile-created PO) — display only, never
+     * an identity: generator_id (phone number for mobile, "user1"/"user2"/
+     * "user3" for desktop) stays the sole key used for matching/filtering
+     * POs. Stored once at creation time (a snapshot, like every other field
+     * here) so a later rename in apps.json doesn't rewrite history. Null/
+     * blank (desktop, or no session name to pull from) falls back to
+     * generator_id itself, which is already display-friendly there.
      */
-    public static function createPO(string $generatorId, string $supplierId, array $items): array
+    public static function createPO(string $generatorId, string $supplierId, array $items, ?string $generatorName = null): array
     {
         $poId = self::nextPoId();
         $timestamp = date('dmy-His');
@@ -69,10 +88,17 @@ class POStore
         $supplierSeg = poagent_sanitize_segment($supplierId);
         $coreName = "{$userSeg}_{$supplierSeg}_{$timestamp}_{$poId}";
 
+        $generatorName = trim((string) $generatorName);
+        if ($generatorName === '') {
+            $generatorName = $generatorId;
+        }
+        $generatorName = mb_substr($generatorName, 0, POAGENT_GENERATOR_NAME_MAX_CHARS);
+
         $record = [
             'unique_id'      => $poId,
             'core_name'      => $coreName,
             'generator_id'   => $generatorId, // raw value kept in JSON body, never reconstructed from filename (§6.2)
+            'generator_name' => $generatorName, // display only — see the doc comment above
             'supplier_id'    => $supplierId,
             'date_generated' => date('c'),
             'status'         => 'open',

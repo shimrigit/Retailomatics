@@ -72,10 +72,13 @@ function poagent_whatsapp_handle_event(array $event): void
     $ttlMin = max(1, (int) round(POAGENT_WA_LINK_TTL / 60));
     $body   = 'שלום' . ($name !== '' ? " $name" : '') . " 👋\n"
             . "מערכת ההזמנות של POAgent.\n\n"
-            . "להיכנס למערכת:\n" . $link . "\n\n"
-            . "הקישור בתוקף ל-{$ttlMin} דקות. לאחר מכן שלח/י הודעה כדי לקבל קישור חדש.";
+            . "לחצו על הכפתור למטה כדי להיכנס למערכת.";
+    $footer = "הקישור בתוקף ל-{$ttlMin} דקות";
 
-    $sent = WaClient::text($phoneNumberId, $from, $body);
+    // cta_url (not text()) — keeps the actual tokenized URL off the chat
+    // bubble entirely, behind a plain button label, instead of a raw link
+    // wrapped across several lines (see the screenshot that prompted this).
+    $sent = WaClient::ctaUrl($phoneNumberId, $from, $body, 'כניסה למערכת', $link, $footer);
 
     poagent_whatsapp_log([
         'ts'         => date('c'),

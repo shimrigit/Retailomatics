@@ -43,7 +43,7 @@ if (empty($items)) {
     exit;
 }
 
-$record = POStore::createPO($generatorId, $supplierId, $items);
+$record = POStore::createPO($generatorId, $supplierId, $items, $_SESSION['poagent_display_name'] ?? null);
 
 $_SESSION['poagent_last_po'] = $record;
 header('Location: po_success.php');

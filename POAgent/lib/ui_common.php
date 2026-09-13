@@ -83,6 +83,33 @@ function poagent_render_head(string $title, int $cardWidth = 690): void
             padding: 2px 10px; font-size: 14px; margin-inline-start: 8px;
         }
 
+        /* po_view.php's PO/DN/VS three-panel layout — base (side-by-side, PO
+           panel sticky). See the @media override below for why sticky is
+           conditional on the columns actually being side by side. */
+        .po-view-layout { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+        .po-view-po-panel { flex: 1 1 360px; position: sticky; top: 20px; }
+        .po-view-deliveries { flex: 3 1 900px; display: flex; flex-direction: column; gap: 36px; min-width: 0; }
+
+        /* po_view.php's PO/DN/VS three-panel layout. The PO panel is sticky
+           so it stays visible while the (potentially much taller) delivery
+           column scrolls past it — but that only makes sense while the two
+           columns are actually side by side. Below the width where they'd
+           wrap onto separate lines anyway (~1290px for the 360px+900px+28px
+           gap flex-basis below), sticky must be turned off: a sticky element
+           always creates its own stacking context and paints ABOVE normal
+           in-flow content, so once the columns stack into one, the pinned PO
+           panel visually overlaps whatever DN/VS content scrolls underneath
+           it — looks like "the PO stays while DN/VS scroll behind it,
+           disconnected", which is exactly the bug this guards against. The
+           breakpoint below forces the same stacking explicitly (rather than
+           leaving it to flex-wrap's own content-based wrap) so there's no
+           gap width where the columns have wrapped but sticky is still on. */
+        @media (max-width: 1320px) {
+            .po-view-layout { flex-direction: column; }
+            .po-view-po-panel { position: static; flex-basis: auto; }
+            .po-view-deliveries { flex-basis: auto; }
+        }
+
         /* Phone-width layout — same markup everywhere, tighter chrome so the
            real device viewport (not a shrunk-down desktop page, now that the
            viewport meta tag above is in place) doesn't feel like the laptop
@@ -156,8 +183,14 @@ function poagent_render_foot(): void
     }
     .poagent-zoom-panel-toolbar button:hover { background: #1a5c87; }
     .poagent-zoom-panel-viewport {
+        /* touch-action: pan-y is the DEFAULT (unzoomed) state, so a touch
+           here scrolls the page like anywhere else. The script below
+           switches this to "none" once zoomed past 1x (there are hidden
+           edges to pan to at that point, so the browser must stop treating
+           a drag here as a page scroll) and back to pan-y on reset/zoom-out
+           — see syncTouchAction() below. */
         flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center;
-        cursor: grab; touch-action: none; min-height: 0;
+        cursor: grab; touch-action: pan-y; min-height: 0;
     }
     .poagent-zoom-panel-viewport.dragging { cursor: grabbing; }
     .poagent-zoom-panel-viewport img {
@@ -182,10 +215,18 @@ function poagent_render_foot(): void
         function apply() {
             img.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
         }
-        function reset() { scale = 1; panX = 0; panY = 0; apply(); }
+        // touch-action toggles with zoom state: at scale 1 the image exactly
+        // fills the frame, so a finger there should scroll the PAGE (pan-y —
+        // see the CSS comment above); past scale 1 there are hidden edges to
+        // reach, so a finger there should pan the PHOTO instead, which means
+        // the browser must stop treating that touch as a page scroll.
+        function syncTouchAction() {
+            viewport.style.touchAction = scale > 1 ? 'none' : 'pan-y';
+        }
+        function reset() { scale = 1; panX = 0; panY = 0; apply(); syncTouchAction(); }
         // Minimum 1 — "fit" (object-fit:contain) is already the natural
         // smallest useful view for an always-visible inline panel.
-        function zoomBy(factor) { scale = Math.min(8, Math.max(1, scale * factor)); apply(); }
+        function zoomBy(factor) { scale = Math.min(8, Math.max(1, scale * factor)); apply(); syncTouchAction(); }
 
         panel.querySelectorAll('[data-action]').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -217,6 +258,70 @@ function poagent_render_foot(): void
             dragging = false;
             viewport.classList.remove('dragging');
         });
+
+        // Touch: one finger pans once zoomed past 1× (does nothing — and
+        // lets the page scroll normally — at scale 1, since touch-action is
+        // pan-y then); two fingers pinch-zoom and pan together, anchored on
+        // the pinch midpoint so the point between the fingers stays put.
+        var touchStart = null;   // {x, y, panX, panY} for a single-finger drag
+        var pinchDist = null;    // previous two-finger distance, for a relative zoom step
+        var pinchMid = null;     // previous two-finger midpoint, for a relative pan step
+
+        function touchDistance(t1, t2) {
+            return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        }
+        function touchMidpoint(t1, t2) {
+            return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+        }
+
+        viewport.addEventListener('touchstart', function (e) {
+            if (e.touches.length === 2) {
+                touchStart = null;
+                pinchDist = touchDistance(e.touches[0], e.touches[1]);
+                pinchMid = touchMidpoint(e.touches[0], e.touches[1]);
+            } else if (e.touches.length === 1 && scale > 1) {
+                pinchDist = null;
+                pinchMid = null;
+                var t = e.touches[0];
+                touchStart = { x: t.clientX, y: t.clientY, panX: panX, panY: panY };
+            }
+        }, { passive: true });
+
+        viewport.addEventListener('touchmove', function (e) {
+            if (e.touches.length === 2) {
+                e.preventDefault(); // pinch — always ours, regardless of scale
+                var dist = touchDistance(e.touches[0], e.touches[1]);
+                var mid = touchMidpoint(e.touches[0], e.touches[1]);
+                if (pinchDist) zoomBy(dist / pinchDist);
+                if (pinchMid) {
+                    panX += mid.x - pinchMid.x;
+                    panY += mid.y - pinchMid.y;
+                    apply();
+                }
+                pinchDist = dist;
+                pinchMid = mid;
+            } else if (e.touches.length === 1 && touchStart) {
+                e.preventDefault(); // only reached at scale > 1 (see touchstart) — never eats a plain scroll
+                var t2 = e.touches[0];
+                panX = touchStart.panX + (t2.clientX - touchStart.x);
+                panY = touchStart.panY + (t2.clientY - touchStart.y);
+                apply();
+            }
+        }, { passive: false });
+
+        function endTouch(e) {
+            pinchDist = null;
+            pinchMid = null;
+            touchStart = null;
+            // Lifting one finger out of a pinch, with the other still down —
+            // resume that finger as a plain single-finger pan.
+            if (e.touches.length === 1 && scale > 1) {
+                var t = e.touches[0];
+                touchStart = { x: t.clientX, y: t.clientY, panX: panX, panY: panY };
+            }
+        }
+        viewport.addEventListener('touchend', endTouch, { passive: true });
+        viewport.addEventListener('touchcancel', endTouch, { passive: true });
     }
 
     document.querySelectorAll('.poagent-zoom-panel').forEach(initZoomPanel);
@@ -278,13 +383,13 @@ function poagent_render_po_detail(array $record): void
     </p>
     <p>
         <strong>ספק:</strong> <?= htmlspecialchars($record['supplier_id'] ?? '') ?>
-        &nbsp; <strong>נוצר ע"י:</strong> <?= htmlspecialchars($record['generator_id'] ?? '') ?>
+        &nbsp; <strong>נוצר ע"י:</strong> <?= htmlspecialchars(poagent_generator_display($record)) ?>
         &nbsp; <strong>תאריך:</strong> <?= htmlspecialchars($dateFormatted) ?>
     </p>
     <p class="muted"><strong>שם קובץ (core name):</strong> <?= htmlspecialchars($record['core_name'] ?? '') ?></p>
 
     <table class="responsive-table">
-        <tr><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th><th>סה"כ</th></tr>
+        <thead><tr><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th><th>סה"כ</th></tr></thead>
         <?php foreach ($items as $line): ?>
         <?php $lineTotal = (int) ($line['qty'] ?? 0) * (int) ($line['unit_price_agorot'] ?? 0); ?>
         <tr>
@@ -306,6 +411,18 @@ function poagent_render_po_detail(array $record): void
 function poagent_agorot_to_ils(int $agorot): string
 {
     return number_format($agorot / 100, 2) . ' ₪';
+}
+
+/**
+ * The human-facing name for whoever generated a PO — 'generator_name' when
+ * present (mobile POs, since POStore::createPO()), else generator_id itself
+ * (desktop's "user1"/"user2"/"user3" is already display-friendly, and this
+ * also covers PO records written before generator_name existed).
+ */
+function poagent_generator_display(array $po): string
+{
+    $name = trim((string) ($po['generator_name'] ?? ''));
+    return $name !== '' ? $name : (string) ($po['generator_id'] ?? '');
 }
 
 /**
@@ -337,7 +454,7 @@ function poagent_render_dn_detail(array $dn): void
     <?php endif; ?>
 
     <table class="responsive-table">
-        <tr><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th></tr>
+        <thead><tr><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th></tr></thead>
         <?php foreach ($dn['items'] ?? [] as $item): ?>
         <tr>
             <td data-label="ברקוד" style="<?= !empty($item['barcode_invalid']) ? 'color:#c0392b;font-weight:bold' : '' ?>"><?= htmlspecialchars($item['barcode'] ?? '') ?></td>
@@ -368,10 +485,12 @@ function poagent_render_vs_detail(array $vs): void
         <p class="muted">לא נמצאו פריטים תואמים להזמנה בתעודה זו.</p>
     <?php else: ?>
     <table class="responsive-table">
+        <thead>
         <tr>
             <th>ברקוד</th><th>נותר לפני</th><th>כמות בתעודה</th><th>הפרש כמות</th>
             <th>מחיר בהזמנה</th><th>מחיר בתעודה</th><th>הפרש מחיר</th>
         </tr>
+        </thead>
         <?php foreach ($vs['line_items'] as $line): ?>
         <tr<?= !empty($line['not_delivered']) ? ' style="background:#fdecea"' : '' ?>>
             <td data-label="ברקוד">
@@ -398,7 +517,7 @@ function poagent_render_vs_detail(array $vs): void
     <?php if (!empty($vs['unmatched_dn_items'])): ?>
         <h4 style="color:#c0392b">פריטים בתעודה שאינם בהזמנה</h4>
         <table class="responsive-table">
-            <tr><th>ברקוד</th><th>כמות</th><th>הערה</th></tr>
+            <thead><tr><th>ברקוד</th><th>כמות</th><th>הערה</th></tr></thead>
             <?php foreach ($vs['unmatched_dn_items'] as $u): ?>
             <tr>
                 <td data-label="ברקוד"><?= htmlspecialchars($u['barcode']) ?></td>
@@ -433,7 +552,7 @@ function poagent_render_total_check(array $totalCheck): void
     ?>
     <h4 style="margin-top:24px;color:#555">🧮 בדיקת סה"כ</h4>
     <table class="responsive-table">
-        <tr><th>סה"כ צפוי (לפי ההזמנה)</th><th>סה"כ מוצהר בתעודה (OCR)</th><th>סה"כ מחושב לפי שורות התעודה</th></tr>
+        <thead><tr><th>סה"כ צפוי (לפי ההזמנה)</th><th>סה"כ מוצהר בתעודה (OCR)</th><th>סה"כ מחושב לפי שורות התעודה</th></tr></thead>
         <tr>
             <td data-label="סה&quot;כ צפוי (לפי ההזמנה)"><?= poagent_agorot_to_ils((int) $totalCheck['po_expected_total_agorot']) ?></td>
             <td data-label="סה&quot;כ מוצהר בתעודה (OCR)" style="<?= $totalCheck['po_vs_declared_flagged'] ? 'color:#c0392b;font-weight:bold' : '' ?>">

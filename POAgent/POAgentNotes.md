@@ -2,7 +2,7 @@
 
 **Project Location:** `C:\xampp\htdocs\website\POAgent`
 **Spec:** `pre-demo` build, based on *Purchase Order & Delivery Note Matching System — Pre-Demo Development Spec (v3)* (Priority DB → 3 local directories, WhatsApp bot → web interface).
-**Last Updated:** September 12, 2026
+**Last Updated:** September 13, 2026
 **Status:** Phase 1 complete (PO creation flow). DN ingestion pipeline complete end-to-end,
 including the human-in-the-loop Review screen and DN/VS visibility from the history list — photo
 import, OCR, manual correction, Diff Engine/VS generation, status transitions, and now DN/VS
@@ -988,3 +988,90 @@ One-line fix, outsized effect.
 **Verified:** `php -l` clean on all 4 touched files (`lib/ui_common.php`, `po_list.php`,
 `po_items.php`, `po_confirm.php`). User tested live on their own phone after the change and
 confirmed it now looks right.
+
+### Fix — po_view.php: sticky PO panel visually overlapping DN/VS content on narrow screens (Sept 13, 2026)
+**Symptom:** on a PO with at least one DN, scrolling down `po_view.php` on a phone made the PO
+panel "stay" while the DN/VS content appeared to scroll in the background underneath it — looking
+like the three panels weren't hooked together. Never showed on a PO with no DN (nothing tall
+enough below to reveal the overlap).
+**Root cause:** the PO panel used `position: sticky`, while the PO/DN/VS layout only stays
+side-by-side above ~1290px of combined width (`flex-basis: 360px` + `900px` + `28px` gap) — below
+that, `flex-wrap` stacks everything into one column. A sticky element always creates its own
+stacking context and paints ABOVE normal in-flow content, so once stacked on a phone, the pinned
+PO panel visually sat on top of whatever DN/VS content scrolled underneath it.
+**Fix:** moved the layout from inline styles into shared classes (`po-view-layout`,
+`po-view-po-panel`, `po-view-deliveries`) in `lib/ui_common.php`, with a `@media (max-width: 1320px)`
+rule that forces a single column AND switches the PO panel to `position: static` — sticky is now
+only ever active when the columns are genuinely side by side.
+**Verified:** `php -l` clean on `lib/ui_common.php` and `po_view.php`.
+
+### Fix — DN/VS tables forcing horizontal scroll + DN photo blocking page scroll on mobile (Sept 13, 2026)
+Two more bugs surfaced retesting the fix above, both traced back to the same earlier responsive-UI
+pass (Sept 12 entry):
+1. **DN/VS panels misaligned, draggable left/right** — the header row in these tables
+   (`poagent_render_po_detail()`, `poagent_render_dn_detail()`, `poagent_render_vs_detail()`'s two
+   tables, `poagent_render_total_check()`, plus `po_confirm.php`/`po_list.php`) was a plain
+   `<tr><th>...</th></tr>` with no `<thead>` wrapper. The Sept 12 CSS hides `thead` and turns `td`
+   into blocks for the phone-width card-stack effect — but with no `<thead>` present, the header
+   row stayed table-shaped and its `<th>` cells were never touched by that CSS at all. A `<table>`
+   still holding table layout for even one row resists shrinking below its content's natural
+   width (wider than a phone screen), dragging the whole column — and the page — wide with it.
+   `po_items.php`'s table already had a real `<thead>`, which is why that one screen wasn't hit.
+   **Fix:** wrapped every affected header row in a real `<thead>`.
+2. **DN photo not scrollable/tappable** — `.poagent-zoom-panel-viewport` had `touch-action: none`,
+   which blocks every native touch gesture. The pan/zoom JS only ever wired up mouse events, never
+   touch, so that whole image area (up to 65vh) was a dead zone on a phone: no custom pan (nothing
+   listening for touch) and no native scroll either (blocked by `touch-action: none`). **Fix:**
+   changed to `touch-action: pan-y` so a touch there falls through to normal page scrolling.
+**Verified:** `php -l` clean on `lib/ui_common.php`, `po_confirm.php`, `po_list.php`.
+
+### Feature — touch pinch-zoom and drag-to-pan on the DN photo (Sept 13, 2026)
+**Why:** after the fix above, zooming in via the ＋/－ buttons worked on mobile, but there was no
+way to reach the now-hidden edges of the photo with a finger — user expected to pinch/drag the
+image within its frame, same as any phone photo viewer, without losing the scroll fix just made.
+**What:** added touch handling to the shared zoom panel (`lib/ui_common.php`, one implementation —
+covers `dn_result.php`, `po_view.php`, `dn_review.php`): two-finger pinch zooms and pans together,
+anchored to the midpoint between the fingers; one-finger drag pans the photo, but only once zoomed
+past 1× — at the default fit a finger still scrolls the page normally. `touch-action` now toggles
+dynamically (`pan-y` at scale 1 → page scrolls; `none` past scale 1 → finger pans the photo
+instead), flipping back on reset/zoom-out however that happens (pinch, buttons, or "🔄 איפוס").
+Lifting one finger mid-pinch hands off smoothly to single-finger panning. Desktop mouse
+drag/scroll-wheel zoom untouched — this only adds a parallel touch code path.
+**Verified:** `php -l` clean on `lib/ui_common.php`.
+
+### Feature — WhatsApp login link sent as a hidden CTA button, not a raw exposed URL (Sept 13, 2026)
+**Why:** a screenshot showed the tokenized login link fully exposed as plain text, wrapped across
+many lines in the WhatsApp chat bubble — not the look expected of a real business's messages, and
+WhatsApp text messages have no markdown-style way to show custom text over a hidden link.
+**What:** new `WaClient::ctaUrl()` (`whatsapp_app/lib/WaClient.php`) — Meta's interactive "CTA URL"
+message type: a plain-text body plus one tappable button (custom label, ≤20 chars, Meta's limit)
+that opens the URL on tap; the URL itself never appears in the chat bubble. `POAgent/whatsapp/bot.php`
+now sends the mobile login link this way (button label "כניסה למערכת") instead of
+`WaClient::text()` with the raw link in the body.
+**Verified:** `php -l` clean on both files; ran `poagent_whatsapp_handle_event()` directly against a
+synthetic inbound event. **Caveat surfaced by that test:** this environment turned out to have a
+live Meta token configured, so the test actually sent a real WhatsApp message with the new button
+to the seeded tester number (972546997729) — not a dry run as intended. Worth using a disposable
+test number for any future offline-style check here, since this handler always has a live token
+available.
+
+### Feature — PO records show the mobile user's display name, not the raw phone number (Sept 13, 2026)
+**Why:** the WhatsApp bot already greets a mobile user by name ("שלום שמרי"), but PO screens kept
+showing the raw phone number as the creator, since `generator_id` (deliberately the phone number —
+the actual identity key, per the design note above) was also being used as the DISPLAY value.
+**What:** `generator_id` is untouched (still the sole identity for matching/filtering POs). Added a
+new `generator_name` field, stored once at PO creation time as a snapshot (so a later rename in
+`apps.json` doesn't rewrite history) — `POStore::createPO()` takes an optional `$generatorName`,
+falling back to `generator_id` itself when none is given (desktop, or a PO record from before this
+change). `po_create.php` passes `$_SESSION['poagent_display_name']` through (the same nickname
+already used for the greeting). New shared helper `poagent_generator_display()` in
+`lib/ui_common.php` (name if present, else id) wired into the PO detail view
+(`po_success.php`/`po_view.php`), `po_list.php`'s history table, and `dn_select_po.php`'s picker.
+**Length cap:** 40 characters, `mb_substr` at write time. WhatsApp's own profile-name limit (25
+chars) is the closest real "industry standard" reference, since the name usually originates as a
+WhatsApp contact name or an `apps.json` nickname — but this renders on our own screens rather than
+inside WhatsApp's own tighter UI, so more room was given.
+**Verified:** `php -l` clean on all 5 touched files; a throwaway `POStore::createPO()` test —
+a 44-char name truncated to exactly 40, a no-name (desktop-style) call correctly fell back to
+`generator_id`. Test PO records deleted afterward (counter left advanced — harmless gap, same
+convention as the rest of this project's testing).

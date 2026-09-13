@@ -8,6 +8,13 @@
 //
 // Splitting the flow here also means refreshing dn_review.php never
 // re-runs OCR (cost/idempotency, not just POST/redirect/GET safety).
+//
+// Two ways the photo can arrive: desktop posts a $_POST['source_path'] on
+// this same machine's filesystem (chosen via dn_browse.php's folder
+// browser); mobile posts the image itself as $_FILES['photo'] (captured/
+// picked via dn_capture.php). Both continue through the same OCR/sanity/
+// session-stash tail below — dn_review.php onward doesn't need to know
+// which one happened.
 session_start();
 require_once __DIR__ . '/lib/ui_common.php';
 require_once __DIR__ . '/lib/POStore.php';
@@ -16,7 +23,7 @@ require_once __DIR__ . '/lib/DNOcr.php';
 require_once __DIR__ . '/lib/DNSanity.php';
 $generatorId = poagent_require_generator();
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['po_core_name']) || empty($_POST['source_path'])) {
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['po_core_name'])) {
     header('Location: dn_select_po.php');
     exit;
 }
@@ -32,25 +39,35 @@ if ($po === null) {
     exit;
 }
 
-$sourcePath = $_POST['source_path'];
+$isMobile = !empty($_SESSION['poagent_mobile']);
+$captureScreen = $isMobile ? 'dn_capture.php' : 'dn_browse.php';
+$hasUpload = isset($_FILES['photo']) && ($_FILES['photo']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE;
+$sourcePath = $_POST['source_path'] ?? '';
 
-function poagent_dn_error(string $message, string $poCoreName): void
+if (!$hasUpload && $sourcePath === '') {
+    header('Location: ' . $captureScreen . '?po_core_name=' . urlencode($poCoreName));
+    exit;
+}
+
+function poagent_dn_error(string $message, string $poCoreName, string $captureScreen): void
 {
     poagent_render_head('POAgent – שגיאה בעיבוד תעודת המשלוח');
     ?>
     <h2>⚠️ שגיאה בעיבוד תעודת המשלוח</h2>
     <p class="muted"><?= htmlspecialchars($message) ?></p>
-    <a class="btn secondary" href="dn_browse.php?po_core_name=<?= urlencode($poCoreName) ?>">חזרה לבחירת תמונה</a>
+    <a class="btn secondary" href="<?= htmlspecialchars($captureScreen) ?>?po_core_name=<?= urlencode($poCoreName) ?>">חזרה לבחירת תמונה</a>
     <?php
     poagent_render_foot();
     exit;
 }
 
-// Step 1 — copy the image into DNdir/.
+// Step 1 — get the image into DNdir/, whichever way it arrived.
 try {
-    $imported = DNStore::importImage($poCoreName, $sourcePath);
+    $imported = $hasUpload
+        ? DNStore::importUploadedImage($poCoreName, $_FILES['photo'])
+        : DNStore::importImage($poCoreName, $sourcePath);
 } catch (Throwable $e) {
-    poagent_dn_error($e->getMessage(), $poCoreName);
+    poagent_dn_error($e->getMessage(), $poCoreName, $captureScreen);
 }
 
 // Steps 2–3 — OCR + sanity check. The image is already saved at this point
@@ -58,7 +75,7 @@ try {
 try {
     $ocrRaw = DNOcr::extract($imported['image_path']);
 } catch (Throwable $e) {
-    poagent_dn_error('התמונה נשמרה, אך שלב ה-OCR נכשל: ' . $e->getMessage(), $poCoreName);
+    poagent_dn_error('התמונה נשמרה, אך שלב ה-OCR נכשל: ' . $e->getMessage(), $poCoreName, $captureScreen);
 }
 $sanity = DNSanity::check($ocrRaw);
 

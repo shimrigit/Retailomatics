@@ -18,6 +18,8 @@
  * session to that phone number, redirects into main_menu.php.
  */
 
+require_once __DIR__ . '/../lib/NetworkMode.php';
+
 const POAGENT_WA_LINK_TTL = 900; // 15 minutes
 
 /** Stable HMAC secret; created on first use, reused thereafter. */
@@ -96,9 +98,10 @@ function poagent_wa_verify_token(string $token): ?array
 
 /**
  * Scheme+host for the link. Order: POAGENT_WA_LINK_BASE_URL env var →
- * POAgent/POcounter/.link_base_url file → the host of the current request
- * (i.e. the public host Meta hit the webhook on). Drop a one-line file in
- * POcounter/ if request-host detection is wrong behind your tunnel.
+ * NetworkMode.php's "lan" setting (POAgent/POcounter/.link_base_url — see
+ * POAgent/tools/network_mode.php for the switch UI) → the host of the
+ * current request (i.e. the public host Meta hit the webhook on, normally
+ * ngrok's domain).
  */
 function poagent_wa_link_base_url(): string
 {
@@ -106,12 +109,9 @@ function poagent_wa_link_base_url(): string
     if (is_string($env) && trim($env) !== '') {
         return rtrim(trim($env), '/');
     }
-    $file = __DIR__ . '/../POcounter/.link_base_url';
-    if (is_file($file)) {
-        $v = trim((string) file_get_contents($file));
-        if ($v !== '') {
-            return rtrim($v, '/');
-        }
+    $mode = poagent_network_mode_get();
+    if ($mode['mode'] === 'lan') {
+        return $mode['value'];
     }
     $proto = $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ($_SERVER['REQUEST_SCHEME'] ?? 'https');
     $host  = $_SERVER['HTTP_X_FORWARDED_HOST'] ?? ($_SERVER['HTTP_HOST'] ?? 'localhost');

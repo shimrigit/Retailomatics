@@ -2,9 +2,12 @@
 // DN flow, final step — reads the one-time flash set by dn_confirm.php
 // (POST/redirect/GET, same pattern as po_success.php) and shows the DN
 // photo + OCR extraction + the Variance Statement + the PO status
-// transition, SIDE BY SIDE: data on the left, a large in-page zoomable
-// photo panel on the right (explicit request — no lightbox/separate
-// screen, so the two can be compared directly). Data rendering is shared
+// transition, SIDE BY SIDE on a wide enough screen: data on the left, a
+// large in-page zoomable photo panel on the right (explicit request — no
+// lightbox/separate screen, so the two can be compared directly). Below
+// ~1320px (phones — see .poagent-sticky-layout in lib/ui_common.php) the two
+// stack into one column instead, sticky turns off, and they scroll together.
+// Data rendering is shared
 // with po_view.php (the unified PO+DN+VS view reached from po_list.php)
 // via poagent_render_dn_detail()/poagent_render_vs_detail() in
 // ui_common.php; the photo panel via poagent_render_zoom_panel() there too.
@@ -33,13 +36,13 @@ poagent_render_head('POAgent – תוצאת עיבוד תעודת המשלוח',
 ?>
 <h2>תוצאת עיבוד תעודת המשלוח</h2>
 
-<div style="display:flex; flex-wrap:wrap; gap:28px; align-items:flex-start;">
+<div class="poagent-sticky-layout">
 
-    <div style="flex:1 1 480px; position:sticky; top:20px;">
+    <div class="poagent-sticky-panel" style="flex:1 1 480px;">
         <?php poagent_render_zoom_panel($imageUrl, 'תמונת תעודת משלוח', '85vh'); ?>
     </div>
 
-    <div style="flex:1 1 560px; min-width:0;">
+    <div class="poagent-sticky-fill" style="flex:1 1 560px;">
         <p>
             <strong>הזמנה:</strong> <?= htmlspecialchars($po['unique_id'] ?? '') ?>
             (<?= htmlspecialchars($po['supplier_id'] ?? '') ?>)

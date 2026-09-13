@@ -1,10 +1,12 @@
 <?php
 // Screen 2 — main menu (spec §4.1). Two audiences:
 //   • Desktop  — reached via index.php (pick user1/2/3). Full menu incl.
-//     "Upload DN" and "switch user".
+//     "switch user".
 //   • Mobile   — reached via m/index.php (WhatsApp login link). Identified by
-//     phone number; menu is PO-create + history + logout only. DN upload and
-//     "switch user" are desktop-only.
+//     phone number; menu is PO-create + upload DN + history + logout.
+//     "switch user" is desktop-only (identity there is the phone number, not
+//     a pickable list). DN upload branches to a phone-camera/gallery capture
+//     screen instead of desktop's local-folder browser — see dn_select_po.php.
 session_start();
 require_once __DIR__ . '/lib/ui_common.php';
 $generatorId = poagent_require_generator();
@@ -18,10 +20,8 @@ poagent_render_head('POAgent – תפריט ראשי');
 
 <a class="btn" href="po_supplier.php">➕ צור הזמנת רכש (PO)</a>
 <div class="row-gap"></div>
-<?php if (!$isMobile): ?>
 <a class="btn" href="dn_select_po.php">📷 העלה תעודת משלוח</a>
 <div class="row-gap"></div>
-<?php endif; ?>
 <a class="btn secondary" href="po_list.php<?= $isMobile ? '?mine=1' : '' ?>">📋 היסטוריית הזמנות</a>
 <div class="row-gap"></div>
 <?php if ($isMobile): ?>

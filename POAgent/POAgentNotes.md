@@ -1075,3 +1075,110 @@ inside WhatsApp's own tighter UI, so more room was given.
 a 44-char name truncated to exactly 40, a no-name (desktop-style) call correctly fell back to
 `generator_id`. Test PO records deleted afterward (counter left advanced — harmless gap, same
 convention as the rest of this project's testing).
+
+### Feature — DN ingestion opened up to mobile: camera/gallery capture (Sept 13, 2026)
+**What:** "📷 העלה תעודת משלוח" now shows on mobile too. `dn_select_po.php` branches per session:
+desktop still goes to `dn_browse.php` (local folder browser); mobile goes to new **`dn_capture.php`**
+— two buttons over one hidden `<input type=file>`, toggling `capture="environment"` right before
+`.click()` to steer the native camera vs. photo-library picker (two separate inputs sharing one
+name would both submit, one empty, and PHP keeps only the last — silently dropping the real one).
+`lib/DNStore.php` gained `importUploadedImage()` (from `$_FILES`, sniffs the image type from bytes
+if the reported filename has no usable extension — a phone capture sometimes doesn't) alongside the
+existing `importImage()` (local path); both funnel into a new shared `allocateDestPath()` for the
+spec §6.3 naming. `dn_import.php` now accepts either an upload or a desktop `source_path` and runs
+the same OCR/sanity/session tail either way — desktop's path is otherwise untouched.
+**Verified:** `php -l` clean on all files; real HTTP multipart upload via curl (throwaway PO/photo,
+real OCR call) through to `dn_review.php` rendering actual OCR'd barcodes. Test artifacts deleted.
+
+### Fix — sticky-photo-panel-overlaps-scrolling-content bug, generalized + swept (Sept 13, 2026)
+**Symptom (3 separate reports, same bug):** on a phone, a photo panel using `position: sticky`
+next to taller content stayed pinned while the content scrolled *underneath* it — first found on
+`po_view.php` (PO panel over DN/VS), then `dn_review.php` (DN photo over the OCR review form —
+directly blocking the very comparison that screen exists for), then `dn_result.php` (same, after
+confirming a delivery). Root cause each time: sticky only makes sense while two flex columns are
+genuinely side by side; below the width where they wrap into one column, a sticky element still
+creates its own stacking context and paints ABOVE normal in-flow content, so the wrapped photo
+visually covers whatever scrolls underneath it.
+**Fix:** generalized the first (`po_view.php`-only) fix into a shared pattern in `lib/ui_common.php`
+— `.poagent-sticky-layout` / `.poagent-sticky-panel` / `.poagent-sticky-fill` (renamed from the
+original `po-view-*` classes) — with one `@media (max-width: 1320px)` rule forcing a single column
+and `position: static`. Applied to `po_view.php`, `dn_review.php`, and `dn_result.php`. Swept the
+whole `POAgent/` tree for any other raw `position: sticky` afterward — none left; everything now
+goes through the one shared class, so this shouldn't resurface on some other screen unnoticed.
+While touching `dn_review.php`, also fixed its editable items table missing a `<thead>` wrapper —
+the same root cause as the earlier table-overflow bug (see the Sept 12 entry above), now hit here
+too since DN review became mobile-reachable this session.
+**Verified:** `php -l` clean on all touched files; `grep` confirmed no remaining raw
+`position: sticky` outside the shared class.
+
+### Feature — two-stage upload/OCR with live progress + per-stage retry (Sept 13, 2026)
+**Why:** a mobile DN upload combines a file transfer and an OCR call into one request — with a
+plain form submit, the page goes blank for the whole duration (the OCR call in particular commonly
+takes 5–20+ seconds), which reads as "stuck," and a slow connection made this materially worse
+(one real test: 154.9s upload / 74.6s OCR — see the LAN-mode entry below for why those split the
+way they did).
+**What:** `dn_capture.php` no longer does a plain form submit — picking/capturing a photo now drives
+two sequential `fetch()` calls with a status line updated between them ("⏳ מעלה תמונה…" then
+"⏳ שולח ל-OCR…"). New **`dn_upload_photo.php`** (stage 1 — just saves the file, fast) and
+**`dn_ocr_process.php`** (stage 2 — runs OCR against the already-saved photo) split what
+`dn_import.php` used to do in one shot; desktop's `dn_import.php` is untouched. Each stage times
+itself and both numbers are displayed and kept on screen (not auto-cleared) behind a manual
+"המשך לבדיקת הנתונים ←" button, instead of auto-navigating past them. Failure in either stage offers
+a targeted retry: stage 1 retries the same still-selected file; stage 2 retries just the OCR call
+(the photo is already safely saved either way, so nothing is re-uploaded).
+**Verified:** `php -l` clean; real end-to-end curl test (throwaway PO, real upload + real OCR)
+confirming both stages' JSON responses and `dn_review.php` rendering correctly after. Test
+artifacts deleted.
+
+### Feature — LAN mode: bypass ngrok's relay when phone + laptop share a network, + a timing/diagnostics tool (Sept 13, 2026)
+**The investigation (explicit request to document, since it took real back-and-forth to pin down):**
+user reported the mobile upload was very slow. Established the mobile link always routes through
+**ngrok's relay** (phone → ngrok → tunnel → laptop), never phone→laptop directly. Split
+upload/OCR timing (previous entry) showed both stages abnormally slow (154.9s / 74.6s) — telling,
+since the OCR leg is purely laptop→OpenAI and never touches the phone's connection at all, so both
+being bad pointed at *two* independent problems, not one. Phone-side `speedtest` showed a genuinely
+poor 0.75 Mbps upload — fully explains the upload number by itself, given a realistic phone-photo
+size. The OCR number stayed slow (69.8s) even after fixing the upload path (below), confirming it's
+unrelated to the phone entirely — still unexplained by anything phone-side, most likely the laptop's
+own dongle-connection quality to OpenAI, or the OpenAI call itself.
+**LAN-mode mechanism:** turned out to already exist — `whatsapp/mobile_link.php`'s
+`poagent_wa_link_base_url()` already fell back to a `POAgent/POcounter/.link_base_url` file before
+deriving the base URL from the live (ngrok) request host. Setting that file to the laptop's own LAN
+IP makes every subsequently-issued mobile link (login, PO screens, DN upload — the *whole* session)
+go straight to the laptop, skipping ngrok's relay entirely. Refactored that file-read into shared
+`lib/NetworkMode.php` (`poagent_network_mode_get/set_lan/clear()`, plus
+`poagent_network_mode_local_ip_candidates()` — parses `ipconfig`, no admin rights needed) so both
+`mobile_link.php` and the new tool below use one implementation.
+**Real network hiccup found along the way:** first LAN attempt used the laptop's USB-tethered IP to
+the mobile dongle (`192.168.42.x`) — phone (on the dongle's own WiFi hotspot, a *different* subnet)
+couldn't reach it at all; requests just hung until the phone's own ~60s connection timeout ("server
+stopped responding" in Safari). Root cause: this dongle doesn't bridge its USB-tethering mode and
+WiFi-hotspot mode onto one routable network — two separate subnets, sharing only the dongle's own
+cellular uplink. Fixed by disabling the USB network adapter in Windows (`Disable-NetAdapter` —
+needed to be done via the Settings/Control-Panel GUI, not this session's shell, which lacks admin
+rights) while leaving the USB cable physically connected (power-only now — that's independent of
+Windows' network-adapter state), so the laptop falls back to joining the dongle's WiFi directly,
+same subnet as the phone. Confirmed working: **upload dropped to 2.9s** (from 154.9s) — the LAN-mode
+theory holds. OCR stayed at 69.8s on the same test, cleanly isolating it as not a phone/LAN issue.
+**New tool — `POAgent/tools/network_mode.php`:** browser page (no auth — matches this project's
+existing no-hardening-yet stance for dev tools), two parts: (1) the LAN/ngrok switch itself —
+current mode as a badge, one-click buttons for auto-detected local IPs, manual IP field, a "back to
+ngrok" button; (2) a table of the last 30 deliveries' timing — photo size, upload time (both what
+the phone measured and the server's own near-instant processing time), a computed effective upload
+Mbps, OCR time, item count, and which network mode was active for that delivery — so this
+comparison no longer has to happen by hand, turn by turn, in a chat. Required threading a few more
+fields through the pipeline: `dn_upload_photo.php` now stores byte size + its own processing time in
+the session; `dn_capture.php`'s JS forwards its own measured upload duration into the stage-2
+request; `dn_ocr_process.php` combines all of it plus the active network mode into one
+`POAgent/logs/dn_timing_*.log` line per delivery.
+**Not done / known limitations:** switching modes only affects links issued *after* the switch —
+any link already in WhatsApp keeps its old base URL. The chosen LAN IP can go stale if the network
+changes (dongle reconnect, different adapter). LAN mode only works when the phone can actually reach
+the laptop's IP (same network, no client isolation) — verified true for this specific dongle only
+after disabling its USB-tethering mode.
+**Verified:** `php -l` clean on all touched/added files; `poagent_network_mode_get()`/
+`local_ip_candidates()` tested directly against the real machine state; `set_lan`/`clear` actions
+tested via curl (file written/removed correctly), restored to the real working LAN IP afterward;
+full pipeline re-tested end-to-end with the enriched log fields populating correctly and rendering
+correctly in the tool's table (computed Mbps included). Test log line removed after, real historical
+entries (including the actual 69.8s/154.9s runs from this investigation) left intact.

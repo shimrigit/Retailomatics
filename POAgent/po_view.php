@@ -39,13 +39,13 @@ poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
 ?>
 <h2>הזמנת רכש — <?= htmlspecialchars($po['unique_id'] ?? '') ?></h2>
 
-<div class="po-view-layout">
+<div class="poagent-sticky-layout">
 
-    <div class="po-view-po-panel">
+    <div class="poagent-sticky-panel" style="flex:1 1 360px;">
         <?php poagent_render_po_detail($po); ?>
     </div>
 
-    <div class="po-view-deliveries">
+    <div class="poagent-sticky-fill" style="flex:3 1 900px; display:flex; flex-direction:column; gap:36px;">
         <?php if (empty($dns)): ?>
             <p class="muted">טרם התקבלו תעודות משלוח עבור הזמנה זו.</p>
             <a class="btn" href="dn_select_po.php">📷 העלה תעודת משלוח</a>

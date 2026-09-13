@@ -64,20 +64,7 @@ class DNStore
             );
         }
 
-        if (!is_dir(POAGENT_DNDIR)) {
-            mkdir(POAGENT_DNDIR, 0777, true);
-        }
-
-        $timestamp = date('dmy-His');
-        $dnCoreName = "{$poCoreName}_DN_{$timestamp}";
-        $destPath = POAGENT_DNDIR . "/{$dnCoreName}.{$ext}";
-
-        // Guard against a same-second re-import colliding (unlikely, but
-        // cheap to guard against): append a short unique suffix if it does.
-        if (file_exists($destPath)) {
-            $dnCoreName .= '-' . substr(uniqid(), -4);
-            $destPath = POAGENT_DNDIR . "/{$dnCoreName}.{$ext}";
-        }
+        [$dnCoreName, $destPath] = self::allocateDestPath($poCoreName, $ext);
 
         if (!copy($sourcePath, $destPath)) {
             throw new RuntimeException('שגיאה בהעתקת הקובץ ל-DNdir');
@@ -88,6 +75,89 @@ class DNStore
             'image_path'     => $destPath,
             'image_filename' => basename($destPath),
         ];
+    }
+
+    /**
+     * Mobile counterpart of importImage() — the photo arrives as an HTTP
+     * upload (phone camera/gallery via dn_capture.php) instead of a path on
+     * this machine's own filesystem. $file is one $_FILES[...] entry.
+     * Same naming convention, same return shape, so the caller (dn_import.php)
+     * doesn't need to know which path a given delivery came in through.
+     */
+    public static function importUploadedImage(string $poCoreName, array $file): array
+    {
+        if (!preg_match('/^[A-Za-z0-9_-]+$/', $poCoreName)) {
+            throw new InvalidArgumentException('Invalid PO core name');
+        }
+
+        $error = $file['error'] ?? UPLOAD_ERR_NO_FILE;
+        if ($error === UPLOAD_ERR_NO_FILE) {
+            throw new RuntimeException('לא נבחרה תמונה');
+        }
+        if ($error !== UPLOAD_ERR_OK) {
+            throw new RuntimeException("שגיאה בהעלאת התמונה (קוד $error)");
+        }
+        $tmpPath = (string) ($file['tmp_name'] ?? '');
+        if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+            throw new RuntimeException('קובץ שהועלה לא תקין');
+        }
+
+        $ext = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+        if (!in_array($ext, self::ALLOWED_IMAGE_EXT, true)) {
+            // A phone camera capture sometimes reports a filename with no
+            // real extension (e.g. "image.tmp" / a bare blob name) — sniff
+            // the actual image type from its bytes instead of rejecting a
+            // perfectly good photo over a missing/odd name.
+            $info = @getimagesize($tmpPath);
+            $ext = match ($info[2] ?? null) {
+                IMAGETYPE_JPEG => 'jpg',
+                IMAGETYPE_PNG  => 'png',
+                default        => $ext,
+            };
+        }
+        if (!in_array($ext, self::ALLOWED_IMAGE_EXT, true)) {
+            throw new RuntimeException(
+                'סוג קובץ לא נתמך' . ($ext !== '' ? ": .$ext" : '')
+                . ' (נתמכים: ' . implode(', ', self::ALLOWED_IMAGE_EXT) . ')'
+            );
+        }
+
+        [$dnCoreName, $destPath] = self::allocateDestPath($poCoreName, $ext);
+
+        if (!move_uploaded_file($tmpPath, $destPath)) {
+            throw new RuntimeException('שגיאה בשמירת התמונה שהועלתה ל-DNdir');
+        }
+
+        return [
+            'dn_core_name'   => $dnCoreName,
+            'image_path'     => $destPath,
+            'image_filename' => basename($destPath),
+        ];
+    }
+
+    /**
+     * Shared by importImage()/importUploadedImage() — the spec §6.3 naming
+     * convention (<PO_core_name>_DN_<ddmmyy-hhmmss>.<ext>), plus a same-second
+     * collision guard. Ensures DNdir/ exists.
+     *
+     * @return array{0: string, 1: string} [dn_core_name, dest_path]
+     */
+    private static function allocateDestPath(string $poCoreName, string $ext): array
+    {
+        if (!is_dir(POAGENT_DNDIR)) {
+            mkdir(POAGENT_DNDIR, 0777, true);
+        }
+
+        $timestamp = date('dmy-His');
+        $dnCoreName = "{$poCoreName}_DN_{$timestamp}";
+        $destPath = POAGENT_DNDIR . "/{$dnCoreName}.{$ext}";
+
+        if (file_exists($destPath)) {
+            $dnCoreName .= '-' . substr(uniqid(), -4);
+            $destPath = POAGENT_DNDIR . "/{$dnCoreName}.{$ext}";
+        }
+
+        return [$dnCoreName, $destPath];
     }
 
     /**

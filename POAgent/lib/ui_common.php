@@ -83,31 +83,42 @@ function poagent_render_head(string $title, int $cardWidth = 690): void
             padding: 2px 10px; font-size: 14px; margin-inline-start: 8px;
         }
 
-        /* po_view.php's PO/DN/VS three-panel layout — base (side-by-side, PO
-           panel sticky). See the @media override below for why sticky is
-           conditional on the columns actually being side by side. */
-        .po-view-layout { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
-        .po-view-po-panel { flex: 1 1 360px; position: sticky; top: 20px; }
-        .po-view-deliveries { flex: 3 1 900px; display: flex; flex-direction: column; gap: 36px; min-width: 0; }
+        /* Shared "sticky panel next to scrolling content" layout — used
+           wherever a photo/reference panel is meant to stay in view next to
+           taller content beside it (po_view.php's PO panel next to the
+           DN/VS delivery list; dn_review.php's DN photo next to the
+           editable OCR form). Flex-basis is set per caller via an inline
+           style (it differs: po_view.php's panels are 360/900, dn_review.php's
+           are 520/560) — everything else here is shared.
+           .poagent-sticky-layout   — the flex row wrapper
+           .poagent-sticky-panel    — the panel that stays pinned
+           .poagent-sticky-fill     — the panel that scrolls normally */
+        .poagent-sticky-layout { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+        .poagent-sticky-panel { position: sticky; top: 20px; }
+        .poagent-sticky-fill { min-width: 0; }
 
-        /* po_view.php's PO/DN/VS three-panel layout. The PO panel is sticky
-           so it stays visible while the (potentially much taller) delivery
-           column scrolls past it — but that only makes sense while the two
-           columns are actually side by side. Below the width where they'd
-           wrap onto separate lines anyway (~1290px for the 360px+900px+28px
-           gap flex-basis below), sticky must be turned off: a sticky element
-           always creates its own stacking context and paints ABOVE normal
-           in-flow content, so once the columns stack into one, the pinned PO
-           panel visually overlaps whatever DN/VS content scrolls underneath
-           it — looks like "the PO stays while DN/VS scroll behind it,
+        /* The pinned panel is sticky so it stays visible while the
+           (potentially much taller) content beside it scrolls past — but
+           that only makes sense while the two columns are actually side by
+           side. Below the width where flex-wrap would wrap them onto
+           separate lines anyway, sticky must be turned off: a sticky
+           element always creates its own stacking context and paints ABOVE
+           normal in-flow content, so once the columns stack into one, the
+           pinned panel visually overlaps whatever scrolls underneath it —
+           looks like "the photo stays while the data scrolls behind it,
            disconnected", which is exactly the bug this guards against. The
-           breakpoint below forces the same stacking explicitly (rather than
+           breakpoint forces the same stacking explicitly (rather than
            leaving it to flex-wrap's own content-based wrap) so there's no
-           gap width where the columns have wrapped but sticky is still on. */
+           gap width where the columns have wrapped but sticky is still on.
+           1320px comfortably covers every current caller's own wrap point
+           (po_view.php's 360+900+28≈1290px; dn_review.php's 520+560+28≈1110px)
+           with margin to spare — a bit conservative for the narrower one,
+           but that only means sticky turns off slightly before it strictly
+           needs to, never the reverse (which is the actual bug). */
         @media (max-width: 1320px) {
-            .po-view-layout { flex-direction: column; }
-            .po-view-po-panel { position: static; flex-basis: auto; }
-            .po-view-deliveries { flex-basis: auto; }
+            .poagent-sticky-layout { flex-direction: column; }
+            .poagent-sticky-panel { position: static; flex-basis: auto !important; }
+            .poagent-sticky-fill { flex-basis: auto !important; }
         }
 
         /* Phone-width layout — same markup everywhere, tighter chrome so the

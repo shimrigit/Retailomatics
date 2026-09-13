@@ -4,11 +4,14 @@
 // identical to the Diff Engine unless a person catches the OCR error first
 // — this screen is that catch: an editable table (Excel-sanity-style,
 // invalid cells highlighted) over the OCR draft stashed by dn_import.php,
-// shown SIDE BY SIDE with the actual DN photo — large, sticky (stays in
-// view while the form column scrolls), and zoomable IN PLACE via
-// poagent_render_zoom_panel() (explicit request: never a separate
-// screen/lightbox — the photo and the data being corrected must be
-// comparable at the same time).
+// shown SIDE BY SIDE with the actual DN photo — large, sticky on a wide
+// enough screen (stays in view while the form column scrolls), and zoomable
+// IN PLACE via poagent_render_zoom_panel() (explicit request: never a
+// separate screen/lightbox — the photo and the data being corrected must be
+// comparable at the same time). Below ~1320px (phones — see
+// .poagent-sticky-layout in lib/ui_common.php) the two stack into one column
+// and sticky turns off, so the photo and the form scroll together instead of
+// the pinned photo covering the form scrolling underneath it.
 // GET only reads from session — never re-runs OCR, so refreshing this page
 // is free and safe (and re-visiting it costs nothing on the API bill).
 session_start();
@@ -48,13 +51,13 @@ poagent_render_head('POAgent – בדיקת תעודת משלוח', 1700);
     בהכרח לפער אמיתי מול ההזמנה. ניתן גם למחוק שורה שגויה או להוסיף פריט שה-OCR פספס לגמרי.
 </p>
 
-<div style="display:flex; flex-wrap:wrap; gap:28px; align-items:flex-start;">
+<div class="poagent-sticky-layout">
 
-    <div style="flex:1 1 520px; position:sticky; top:20px;">
+    <div class="poagent-sticky-panel" style="flex:1 1 520px;">
         <?php poagent_render_zoom_panel($imageUrl, 'תמונת תעודת משלוח', '85vh'); ?>
     </div>
 
-    <div style="flex:1 1 560px; min-width:0;">
+    <div class="poagent-sticky-fill" style="flex:1 1 560px;">
         <form method="post" action="dn_confirm.php">
             <input type="hidden" name="po_core_name" value="<?= htmlspecialchars($draft['po_core_name']) ?>">
             <input type="hidden" name="dn_core_name" value="<?= htmlspecialchars($draft['dn_core_name']) ?>">
@@ -74,43 +77,43 @@ poagent_render_head('POAgent – בדיקת תעודת משלוח', 1700);
                    value="<?= $draft['dn_total'] !== null ? htmlspecialchars((string) $draft['dn_total']) : '' ?>">
 
             <div style="overflow-x:auto;">
-            <table id="dnItemsTable">
-                <tr><th>מחק</th><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th><th>סה"כ שורה</th></tr>
+            <table id="dnItemsTable" class="responsive-table">
+                <thead><tr><th>מחק</th><th>ברקוד</th><th>שם פריט</th><th>כמות</th><th>מחיר יח'</th><th>סה"כ שורה</th></tr></thead>
                 <?php foreach ($items as $i => $item): ?>
                 <?php $rowTotal = (float) $item['qty'] * (float) $item['unit_price']; ?>
                 <tr>
-                    <td style="text-align:center"><input type="checkbox" name="items[<?= $i ?>][delete]" value="1"></td>
-                    <td>
+                    <td data-label="מחק" style="text-align:center"><input type="checkbox" name="items[<?= $i ?>][delete]" value="1"></td>
+                    <td data-label="ברקוד">
                         <input type="text" name="items[<?= $i ?>][barcode]" value="<?= htmlspecialchars($item['barcode']) ?>"
                                style="margin-bottom:0<?= $item['barcode_invalid'] ? ';border-color:#c0392b;background:#fdecea' : '' ?>">
                     </td>
-                    <td>
+                    <td data-label="שם פריט">
                         <input type="text" name="items[<?= $i ?>][name]" value="<?= htmlspecialchars($item['name']) ?>" style="margin-bottom:0">
                     </td>
-                    <td>
+                    <td data-label="כמות">
                         <input type="number" step="1" name="items[<?= $i ?>][qty]" value="<?= htmlspecialchars((string) $item['qty']) ?>"
                                class="qty" style="margin-bottom:0<?= $item['qty_invalid'] ? ';border-color:#c0392b;background:#fdecea' : '' ?>">
                     </td>
-                    <td>
+                    <td data-label="מחיר יח'">
                         <input type="number" step="0.01" name="items[<?= $i ?>][unit_price]" value="<?= htmlspecialchars((string) $item['unit_price']) ?>"
                                style="width:100px;margin-bottom:0<?= $item['price_invalid'] ? ';border-color:#c0392b;background:#fdecea' : '' ?>">
                     </td>
-                    <td class="row-total" style="font-weight:bold"><?= number_format($rowTotal, 2) ?> ₪</td>
+                    <td data-label="סה&quot;כ שורה" class="row-total" style="font-weight:bold"><?= number_format($rowTotal, 2) ?> ₪</td>
                 </tr>
                 <?php endforeach; ?>
                 <?php for ($i = count($items); $i < count($items) + $blankRowCount; $i++): ?>
                 <tr>
-                    <td style="text-align:center"></td>
-                    <td><input type="text" name="items[<?= $i ?>][barcode]" value="" placeholder="פריט חדש…" style="margin-bottom:0"></td>
-                    <td><input type="text" name="items[<?= $i ?>][name]" value="" style="margin-bottom:0"></td>
-                    <td><input type="number" step="1" name="items[<?= $i ?>][qty]" value="" class="qty" style="margin-bottom:0"></td>
-                    <td><input type="number" step="0.01" name="items[<?= $i ?>][unit_price]" value="" style="width:100px;margin-bottom:0"></td>
-                    <td class="row-total" style="font-weight:bold">0.00 ₪</td>
+                    <td data-label="מחק" style="text-align:center"></td>
+                    <td data-label="ברקוד"><input type="text" name="items[<?= $i ?>][barcode]" value="" placeholder="פריט חדש…" style="margin-bottom:0"></td>
+                    <td data-label="שם פריט"><input type="text" name="items[<?= $i ?>][name]" value="" style="margin-bottom:0"></td>
+                    <td data-label="כמות"><input type="number" step="1" name="items[<?= $i ?>][qty]" value="" class="qty" style="margin-bottom:0"></td>
+                    <td data-label="מחיר יח'"><input type="number" step="0.01" name="items[<?= $i ?>][unit_price]" value="" style="width:100px;margin-bottom:0"></td>
+                    <td data-label="סה&quot;כ שורה" class="row-total" style="font-weight:bold">0.00 ₪</td>
                 </tr>
                 <?php endfor; ?>
                 <tr>
                     <td colspan="5" style="text-align:left"><strong>סה"כ לפי שורות</strong></td>
-                    <td id="dnRowsSumTotal"><strong><?= number_format($rowsSum, 2) ?> ₪</strong></td>
+                    <td data-label="סה&quot;כ לפי שורות" id="dnRowsSumTotal"><strong><?= number_format($rowsSum, 2) ?> ₪</strong></td>
                 </tr>
             </table>
             </div>

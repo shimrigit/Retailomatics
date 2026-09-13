@@ -1182,3 +1182,61 @@ tested via curl (file written/removed correctly), restored to the real working L
 full pipeline re-tested end-to-end with the enriched log fields populating correctly and rendering
 correctly in the tool's table (computed Mbps included). Test log line removed after, real historical
 entries (including the actual 69.8s/154.9s runs from this investigation) left intact.
+
+### Feature — field users vs. backoffice users; OCR review reserved for the office (Sept 13, 2026)
+**Why:** explicit request — the likely real-world uploader (a hotel supply manager or similar field
+role) can't be trusted to do a careful OCR review the way an office process would; a bad self-review
+would defeat the whole point of the Diff Engine/VS. Standard "maker-checker" split: the person who
+captures the data isn't the one who signs off on it.
+**What:**
+- **`lib/UserRoles.php` + `user_roles.json`** — flat `{generator_id: "fu"|"bou"}` config. Seeded per
+  explicit test request: `user1`/`user2` = BOU, `user3` = FU, שמרי (`972546997729`) = FU. **Anyone not
+  listed defaults to FU** (explicit choice — an unconfigured/new user gets the MORE restricted role,
+  never silently inherits BOU powers by omission).
+- **New PO status `preocr`** — a photo has been uploaded but OCR hasn't run yet. New badge color.
+  `DNStore::findPendingImage()` finds it with no new state file needed: a DN image with no matching
+  finalized `<dn_core_name>.json` alongside it in `DNdir/` IS the "pending" marker, same
+  filename-glob-as-index convention as everywhere else in this codebase.
+- **FU's upload stops right after the photo is saved** — both `dn_import.php` (desktop) and
+  `dn_upload_photo.php` (mobile stage 1) branch on role: FU sets the PO to `preocr` and stops there
+  (no OCR call at all); BOU is completely unchanged, full pipeline runs immediately exactly as
+  before. New shared **`dn_upload_pending.php`** is the plain confirmation screen either path lands
+  on ("intentionally no data shown — an FU never sees the OCR draft, only a confirmation the photo
+  is saved and the office will take it from here). `dn_capture.php`'s JS skips stage 2 (OCR)
+  entirely for FU, based on a new `done: true` flag in stage 1's response.
+- **New `dn_process_ocr.php`, BOU-only** (an FU hitting it directly bounces to `po_list.php`,
+  verified) — finds the PO's pending photo, runs OCR **for the first time** (it never ran for an FU
+  upload), and hands off into the **unchanged** `dn_review.php` → `dn_confirm.php` pipeline. Neither
+  of those files needed to change at all — they only ever assumed "whoever is running through this
+  screen right now signs off on it," never *when* or *who uploaded the original photo*, so a BOU
+  processing a photo an FU uploaded earlier (possibly a different day) just works.
+- **`po_list.php`** — a `preocr` row shows a "🔄 עבד OCR" link, BOU-only.
+- **`dn_select_po.php`** — already excluded `preocr` from the eligible-POs list for free (its filter
+  only allows `open`/`prcv`), so a PO with one pending delivery can't take a second one until the
+  first is processed. Comment updated to say so explicitly; no behavior change needed.
+- **Bug fix required by this feature, in `DNPipeline.php`:** the existing "no PO progress happened,
+  leave status unchanged" fallback would have left a PO stuck in `preocr` forever if the processed
+  delivery matched nothing on the PO — `preocr` was never a real fulfillment status to fall back to.
+  Now explicitly resolves to `open` in that case instead. Confirmed for real: a test delivery whose
+  OCR'd item didn't match the PO's own item correctly ended at `open`, not stuck at `preocr`.
+**Verified:** `php -l` clean on all touched/added files. Real end-to-end HTTP tests: (1) FU (user3)
+creates a PO, uploads a DN via the desktop path (`source_path`) → PO correctly flips to `preocr`,
+redirected to the confirmation screen; (2) same FU hitting `dn_process_ocr.php` directly → bounced
+to `po_list.php`, nothing processed; (3) BOU (user1) hits the same URL → real OCR runs, redirected
+to `dn_review.php` with real OCR'd data; (4) submitted through `dn_confirm.php` → DN JSON + VS
+written, PO correctly resolved `preocr` → `open` (the no-match case above); (5) mobile stage-1
+upload (`dn_upload_photo.php`) as FU → `{ok:true, done:true}`, PO flipped to `preocr`, confirmed
+separately from the desktop path since it's different code; (6) `po_list.php` shows "🔄 עבד OCR" for
+BOU on a `preocr` row and not at all for FU on the same row. All test POs/photos/DN/VS records
+deleted afterward (counters left advanced — harmless gaps, same convention as the rest of this
+project's testing).
+**Known issue — NOT YET DEBUGGED, real user report (Sept 13, 2026):** clicking "🔄 עבד OCR" made the
+page appear to stop responding entirely. User's own hypothesis: possibly the wrong user context
+being used for the OCR call. **Not confirmed** — the curl-based tests above did complete successfully
+end-to-end for this exact action, so it isn't unconditionally broken. Leading alternative hypothesis,
+not yet checked against the real failure: `dn_process_ocr.php` is a plain synchronous page with ZERO
+loading/progress feedback — unlike `dn_capture.php`, which got the full two-stage AJAX + visible
+timing treatment specifically because a silent multi-second-to-70+-second OCR wait reads as "stuck"
+(see the LAN-mode entry above). `dn_process_ocr.php` is the one new OCR-triggering page from today
+that never got that treatment. Worth checking this first before chasing a user/session theory —
+**flagged explicitly by the user to debug seriously tomorrow, not attempted live tonight.**

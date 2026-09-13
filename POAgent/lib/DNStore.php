@@ -177,6 +177,41 @@ class DNStore
     }
 
     /**
+     * The pending, not-yet-OCR'd photo for a PO — an FU's upload (see
+     * UserRoles.php) saves the image via importImage()/importUploadedImage()
+     * but never calls finalize(), so it sits in DNdir/ with no matching
+     * "<dn_core_name>.json" alongside it. That gap IS the "pending" marker —
+     * no separate state file needed, matching this codebase's existing
+     * filename-glob-is-the-index convention (spec §8.1). A PO should only
+     * ever have at most one of these at a time (dn_select_po.php excludes a
+     * PO already in "preocr" from taking a second delivery) — if more than
+     * one somehow exists, the newest (by the timestamp baked into the
+     * filename) is returned.
+     *
+     * Returns ['dn_core_name', 'image_path', 'image_filename'] or null.
+     */
+    public static function findPendingImage(string $poCoreName): ?array
+    {
+        if (!preg_match('/^[A-Za-z0-9_-]+$/', $poCoreName)) {
+            return null;
+        }
+        $extPattern = '{' . implode(',', self::ALLOWED_IMAGE_EXT) . '}';
+        $matches = glob(POAGENT_DNDIR . "/{$poCoreName}_DN_*.{$extPattern}", GLOB_BRACE) ?: [];
+        $pending = [];
+        foreach ($matches as $path) {
+            $dnCoreName = pathinfo($path, PATHINFO_FILENAME);
+            if (!is_file(POAGENT_DNDIR . "/{$dnCoreName}.json")) {
+                $pending[] = ['dn_core_name' => $dnCoreName, 'image_path' => $path, 'image_filename' => basename($path)];
+            }
+        }
+        if (empty($pending)) {
+            return null;
+        }
+        usort($pending, fn($a, $b) => strcmp($b['dn_core_name'], $a['dn_core_name']));
+        return $pending[0];
+    }
+
+    /**
      * All finalized DN records for a PO (spec §6.3 filename convention),
      * ordered oldest-first by extracted_at. Filename-glob based, same
      * convention as POStore::listPOs()/VSStore::listForPo() (spec §8.1).

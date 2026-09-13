@@ -52,7 +52,11 @@ class DNPipeline
         }
         // If nothing on the PO was actually received, leave status
         // unchanged — a VS was generated, but no PO progress happened.
-        $newStatus = $po['status'];
+        // Exception: 'preocr' (an FU-uploaded photo awaiting BOU processing,
+        // see UserRoles.php) is never a real fulfillment status to fall back
+        // to — it must always resolve to something real once processed,
+        // whether or not this particular delivery advanced anything.
+        $newStatus = $po['status'] === 'preocr' ? 'open' : $po['status'];
         if ($anyReceived) {
             $newStatus = $allFulfilled ? 'closed' : 'prcv';
         }

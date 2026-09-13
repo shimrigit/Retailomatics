@@ -6,7 +6,9 @@ require_once __DIR__ . '/lib/ui_common.php';
 require_once __DIR__ . '/lib/POStore.php';
 require_once __DIR__ . '/lib/DNStore.php';
 require_once __DIR__ . '/lib/VSStore.php';
+require_once __DIR__ . '/lib/UserRoles.php';
 $generatorId = poagent_require_generator();
+$isBou = poagent_is_bou($generatorId);
 
 // Default to showing ALL users' POs (helps with debugging during the demo
 // build) — pass ?mine=1 to narrow to just the current session's user.
@@ -58,6 +60,10 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
                     &nbsp;<?= $vsHasVariance ? '⚠' : '✔' ?> <?= $vsCount ?>
                 <?php endif; ?>
             </a>
+            <?php if (($po['status'] ?? '') === 'preocr' && $isBou): ?>
+                &nbsp;|&nbsp;
+                <a href="dn_process_ocr.php?po_core_name=<?= urlencode($coreName) ?>">🔄 עבד OCR</a>
+            <?php endif; ?>
         </td>
     </tr>
     <?php endforeach; ?>

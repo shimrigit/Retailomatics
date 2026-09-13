@@ -190,6 +190,20 @@ poagent_render_head('POAgent – תמונת תעודת משלוח');
         postJson('dn_upload_photo.php', formData)
             .then(function (data) {
                 var clientMs = Date.now() - startedAt;
+                if (data.ok && data.done) {
+                    // Field user (see lib/UserRoles.php) — no OCR stage for
+                    // this role; the photo is saved and the PO is parked at
+                    // "preocr" for a backoffice user to process later.
+                    status.hidden = false;
+                    status.textContent = '✅ התמונה הועלתה בהצלחה תוך ' + seconds(clientMs) + '.';
+                    errorActions.hidden = true;
+                    redirectTarget = 'dn_upload_pending.php?po_core_name=' + encodeURIComponent(poCoreName);
+                    continueBtn.textContent = 'המשך ←';
+                    continueActions.hidden = false;
+                    cameraBtn.disabled = true;
+                    galleryBtn.disabled = true;
+                    return;
+                }
                 if (data.ok) {
                     logTiming('📤 העלאה הושלמה תוך ' + seconds(clientMs)
                         + (typeof data.server_ms === 'number' ? ' (עיבוד בשרת: ' + seconds(data.server_ms) + ' — כל השאר הוא זמן העברה בפועל)' : '') + '.');

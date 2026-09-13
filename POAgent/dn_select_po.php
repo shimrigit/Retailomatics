@@ -1,7 +1,12 @@
 <?php
 // DN flow, step 1 (spec §9 step 3) — pick which PO this delivery is against.
-// Only open/prcv POs are eligible (a closed/cancelled PO has nothing left
-// to deliver against). Shows POs across ALL users, not just the current
+// Only open/prcv POs are eligible: a closed/cancelled PO has nothing left to
+// deliver against, and a "preocr" PO already has an unprocessed delivery
+// pending (see lib/UserRoles.php) — a second one at the same time would be
+// ambiguous about which photo is "the pending one", so it's excluded here
+// too until a BOU processes the first (this filter already did that
+// exclusion for free, being an open/prcv allowlist rather than a
+// closed/cancelled blocklist). Shows POs across ALL users, not just the current
 // session's generator_id — for demo purposes a delivery may need to be
 // logged against any user's PO, not only the one currently "logged in"
 // (mirrors po_list.php's own all-users toggle).

@@ -21,6 +21,7 @@ require_once __DIR__ . '/lib/POStore.php';
 require_once __DIR__ . '/lib/DNStore.php';
 require_once __DIR__ . '/lib/DNOcr.php';
 require_once __DIR__ . '/lib/DNSanity.php';
+require_once __DIR__ . '/lib/UserRoles.php';
 $generatorId = poagent_require_generator();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['po_core_name'])) {
@@ -70,8 +71,20 @@ try {
     poagent_dn_error($e->getMessage(), $poCoreName, $captureScreen);
 }
 
-// Steps 2–3 — OCR + sanity check. The image is already saved at this point
-// even if OCR fails, so nothing is lost — just re-import to retry.
+// FU (field user, see lib/UserRoles.php): stop right here — the photo is
+// safely saved, but OCR/review/finalize is reserved for a BOU (backoffice
+// user) to run later. Park the PO in "preocr" so it shows up as needing
+// office attention; DNStore::findPendingImage() is how a BOU's
+// dn_process_ocr.php later finds this exact photo (no separate state file —
+// an image with no matching finalized JSON alongside it IS "pending").
+if (poagent_is_fu($generatorId)) {
+    POStore::setStatus($poCoreName, 'preocr');
+    header('Location: dn_upload_pending.php?po_core_name=' . urlencode($poCoreName));
+    exit;
+}
+
+// Steps 2–3 (BOU only) — OCR + sanity check. The image is already saved at
+// this point even if OCR fails, so nothing is lost — just re-import to retry.
 try {
     $ocrRaw = DNOcr::extract($imported['image_path']);
 } catch (Throwable $e) {

@@ -12,6 +12,7 @@
 session_start();
 require_once __DIR__ . '/lib/POStore.php';
 require_once __DIR__ . '/lib/DNStore.php';
+require_once __DIR__ . '/lib/UserRoles.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -62,6 +63,15 @@ try {
     poagent_dn_upload_json(false, ['error' => $e->getMessage()]);
 }
 $serverMs = (int) round((microtime(true) - $serverStartedAt) * 1000);
+
+// FU (field user, see lib/UserRoles.php): stop right here, same as
+// desktop's dn_import.php — the photo is saved, but OCR is reserved for a
+// BOU to run later via dn_process_ocr.php. No stage 2 for this role, so no
+// need to stash a "pending" session record either.
+if (poagent_is_fu($_SESSION['poagent_generator_id'])) {
+    POStore::setStatus($poCoreName, 'preocr');
+    poagent_dn_upload_json(true, ['done' => true, 'image_filename' => $imported['image_filename']]);
+}
 
 // Lightweight pre-OCR record — dn_ocr_process.php (stage 2) picks this up
 // next. Deliberately separate from $_SESSION['poagent_dn_draft'], which only

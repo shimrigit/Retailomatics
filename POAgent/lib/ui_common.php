@@ -48,6 +48,7 @@ function poagent_render_head(string $title, int $cardWidth = 690): void
         .row-gap { margin-top: 14px; }
         .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 14px; font-weight: bold; }
         .badge.open { background: #fff3cd; color: #856404; }
+        .badge.preocr { background: #ffe0b2; color: #8a4b00; }
         .badge.prcv { background: #d1ecf1; color: #0c5460; }
         .badge.closed { background: #d4edda; color: #155724; }
         .badge.cancelled { background: #f8d7da; color: #721c24; }

@@ -2,7 +2,7 @@
 
 **Project Location:** `C:\xampp\htdocs\website\POAgent`
 **Spec:** `pre-demo` build, based on *Purchase Order & Delivery Note Matching System — Pre-Demo Development Spec (v3)* (Priority DB → 3 local directories, WhatsApp bot → web interface).
-**Last Updated:** September 13, 2026
+**Last Updated:** September 15, 2026
 **Status:** Phase 1 complete (PO creation flow). DN ingestion pipeline complete end-to-end,
 including the human-in-the-loop Review screen and DN/VS visibility from the history list — photo
 import, OCR, manual correction, Diff Engine/VS generation, status transitions, and now DN/VS
@@ -1240,3 +1240,94 @@ timing treatment specifically because a silent multi-second-to-70+-second OCR wa
 (see the LAN-mode entry above). `dn_process_ocr.php` is the one new OCR-triggering page from today
 that never got that treatment. Worth checking this first before chasing a user/session theory —
 **flagged explicitly by the user to debug seriously tomorrow, not attempted live tonight.**
+
+### Fix — "🔄 עבד OCR" page appearing to hang, resolved (Sept 15, 2026)
+**Diagnosis:** the "wrong user" theory from the report above did NOT hold up — a clean re-test
+(FU uploads, BOU triggers processing) completed correctly and quickly (5.3s), proving the
+role/session logic itself was fine. The actual cause was the alternative hypothesis already written
+down yesterday: `dn_process_ocr.php` was a plain synchronous page with zero loading feedback, and
+the Apache error log had direct proof this matters — two real
+**"Maximum execution time of 120 seconds exceeded in DNOcr.php"** fatal crashes logged from Sept 13
+(during the earlier mobile/LAN-mode testing, a bad-connection moment). So depending on conditions,
+clicking "🔄 עבד OCR" was either a long silent wait that looked stuck, or in the worst case a hard
+PHP fatal crash producing a blank page that never recovers — both read as "stopped responding."
+**Fix:** split it the same way `dn_capture.php`'s upload already was. `dn_process_ocr.php` is now a
+thin waiting page (role/PO-state checks up front, loads in ~70ms) whose JS immediately calls new
+**`dn_process_ocr_run.php`** (the actual OCR call, BOU-gated again independently since it's a
+separate reachable endpoint) and shows "⏳ מריץ OCR... בבקשה המתן" while waiting, with a retry button
+on failure (safe to repeat — the photo never moves/changes). Also bumped that endpoint's own
+`set_time_limit(240)` for extra headroom over the default 120s, given the confirmed real crash — a
+mitigation, not a fix for a slow connection itself.
+**Verified:** `php -l` clean on both files. Real end-to-end re-test: FU blocked at both the waiting
+page (redirected to `po_list.php`) and the run endpoint (403 JSON) independently; BOU's waiting page
+now returns in 0.07s instead of blocking on the OCR call; the actual OCR run (now a separate request)
+completed in 4.3s with correct JSON, `dn_review.php` rendering correctly afterward. Test PO/photo
+records deleted afterward (counters left advanced — harmless gaps, same convention as the rest of
+this project's testing).
+
+### Fix — po_view.php had no idea a "preocr" pending photo existed at all (Sept 15, 2026)
+**Symptom (real user report, שמרי/FU):** after an FU uploads a DN (PO correctly flips to `preocr`),
+opening that PO from mobile ("צפייה") showed "טרם התקבלו תעודות משלוח עבור הזמנה זו" (no delivery
+received yet) and still offered the normal "📷 העלה תעודת משלוח" upload button — as if nothing had
+been uploaded at all, when in fact a photo was sitting in `DNdir/` waiting on a BOU.
+**Root cause:** `po_view.php` only ever asked `DNStore::listForPo()`, which finds FINALIZED DN
+records (`<dn_core_name>.json`) — an FU's pending photo has no JSON yet (that's the entire point of
+`DNStore::findPendingImage()`, added with the FU/BOU feature above), so it was structurally
+invisible to this screen. Nothing had wired the two together.
+**What the user actually asked for:** a `preocr` PO should show the pending photo, and should offer
+either processing it or deleting-and-replacing it — never a second upload on top of an unprocessed
+one.
+**Fix:**
+- `po_view.php` now also calls `DNStore::findPendingImage()` and renders an extra delivery-row block
+  for it (photo + zoom panel, a `preocr` badge, "טרם עובדה") whenever one exists — in addition to any
+  already-finalized deliveries, not just when there are none (a PO already `prcv` from a finalized
+  delivery can still pick up a new pending one). The normal upload button is now gated on
+  `$pending === null` too, so it disappears the moment a delivery is pending, matching
+  `dn_select_po.php`'s existing exclusion (spec consistency across both entry points).
+- For BOU, the pending block also shows a direct "🔄 עבד OCR עכשיו" shortcut straight into
+  `dn_process_ocr.php`, so processing doesn't require a detour through `po_list.php`.
+- New **`dn_delete_pending.php`** (available to both FU and BOU — deleting an unprocessed photo
+  touches no OCR'd/finalized data, so it doesn't need the office-only gate) — removes the pending
+  image and reverts the PO's status. Getting the revert target right needed care: a blind reset to
+  `open` would have silently erased a PRIOR finalized delivery's progress if this was a *second*
+  pending delivery on an already-`prcv` PO. Factored the shared computation out of
+  `DNPipeline::finalizeDelivery()` into new **`DiffEngine::statusFromHistory()`** (status implied
+  purely by a PO's finalized VS history, ignoring the transient `preocr` wrapper) so both call sites
+  — the normal finalize path and this delete path — use the exact same logic. `DNPipeline.php` itself
+  now just calls it too, replacing its own inline copy (one implementation, not two).
+**Verified:** `php -l` clean on all 4 touched/added files. Real end-to-end tests: (1) pending photo
+correctly renders (`src="DNdir/..."` pointed at the real saved file) for both FU and BOU, with "🔄 עבד
+OCR עכשיו" shown only for BOU and the old "no DN yet" prompt/upload-button gone for both; (2) delete
+→ photo removed from `DNdir/`, PO correctly reverted to `open` (nothing had ever been received),
+`po_view.php` back to the normal "no DN yet" prompt, and `dn_select_po.php` listing it as eligible
+again; (3) **the important case** — a PO already `prcv` from a real finalized delivery (qty 1 of 2
+received) picks up a second pending delivery (→ `preocr`), deleting THAT correctly reverted to
+`prcv`, not `open` — delivery #1's progress was not lost. All test POs/photos/DN/VS records deleted
+afterward (counters left advanced — harmless gaps, same convention as the rest of this project's
+testing).
+
+### Fix — "🔄 עבד OCR עכשיו" bounced to po_list.php on a real PO with a genuinely pending photo (Sept 16, 2026)
+**Symptom (real user report, PO00039):** `po_view.php` correctly showed a pending, unprocessed DN
+photo (per `DNStore::findPendingImage()`) with the usual BOU actions — but clicking "🔄 עבד OCR עכשיו"
+just bounced straight to `po_list.php`, doing nothing.
+**Root cause — two different opinions about the same thing:** `po_view.php` (and
+`DNStore::findPendingImage()`, the real source of truth) decide "is there a pending delivery" purely
+from whether an image exists in `DNdir/` with no matching finalized JSON. But `dn_process_ocr.php`,
+`dn_process_ocr_run.php`, and `po_list.php`'s "🔄 עבד OCR" link all instead required the PO's status
+field to literally equal `'preocr'`. PO00039's actual status had drifted to `open` while its photo
+was still genuinely unprocessed — confirmed directly on disk: the PO's `_open.json` predates the
+still-present, still-unmatched photo file. Only one code path ever sets `preocr`
+(`dn_import.php`/`dn_upload_photo.php`'s FU branch) — an incomplete/abandoned BOU-originated upload
+(imported, OCR'd, never confirmed) leaves an identical-looking orphaned photo on disk without ever
+touching status at all, since BOU's own flow doesn't set `preocr` in the first place. Two different
+correctness criteria for the same real-world situation, and the stricter one (three places) silently
+lost to the looser one (`po_view.php`) — the UI promised an action the gate then refused.
+**Fix:** all three gates now use the exact same criterion as `po_view.php` — a pending photo's
+existence, not the status string. This isn't just a bugfix but a real robustness improvement: any
+orphaned pending photo (FU-originated or an abandoned BOU upload) is now recoverable by a BOU
+regardless of how the status field ended up out of sync, instead of getting permanently stuck
+invisible to the one mechanism meant to process it.
+**Verified:** `php -l` clean on all 3 touched files. Confirmed directly against the real PO00039 (not
+a throwaway test PO — deliberately stopped at loading the waiting page, GET-only/no side effects by
+design, without triggering the actual OCR run, so as not to interfere with the user's own live
+session) — now returns the waiting page (200) instead of bouncing (302 to `po_list.php`).

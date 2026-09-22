@@ -12,7 +12,8 @@
       },
       "allowlist_mode": "enforced",
       "allowed_senders": [
-        { "number": "972546997729", "name": "שמרי" }
+        { "number": "972546997729", "name": "שמרי" },
+        { "number": "972524317082", "name": "צור אטיאס" }
       ],
       "handler": {
         "file": "../POAgent/whatsapp/bot.php",

@@ -30,36 +30,14 @@ class DNPipeline
         VSStore::write($poCoreName, $deliveryIndex, $vs);
 
         // Status transition off the cumulative remaining-quantity picture
-        // across ALL of this PO's VS records to date (including this one).
+        // across ALL of this PO's VS records to date (including this one) —
+        // DiffEngine::statusFromHistory() (shared with dn_delete_pending.php,
+        // which needs the identical computation to revert a discarded
+        // "preocr" delivery to the right status, not just a hardcoded guess).
+        // Always resolves to a real status (open/prcv/closed) even from
+        // "preocr", which was never itself a real fulfillment status.
         $allVsForPo = VSStore::listForPo($poCoreName);
-        $receivedTotal = [];
-        foreach ($allVsForPo as $v) {
-            foreach ($v['line_items'] ?? [] as $line) {
-                $b = $line['barcode'] ?? '';
-                $receivedTotal[$b] = ($receivedTotal[$b] ?? 0) + (int) ($line['dn_qty'] ?? 0);
-            }
-        }
-        $anyReceived = false;
-        $allFulfilled = true;
-        foreach ($po['items'] ?? [] as $item) {
-            $received = $receivedTotal[$item['barcode']] ?? 0;
-            if ($received > 0) {
-                $anyReceived = true;
-            }
-            if ($received < (int) $item['qty']) {
-                $allFulfilled = false;
-            }
-        }
-        // If nothing on the PO was actually received, leave status
-        // unchanged — a VS was generated, but no PO progress happened.
-        // Exception: 'preocr' (an FU-uploaded photo awaiting BOU processing,
-        // see UserRoles.php) is never a real fulfillment status to fall back
-        // to — it must always resolve to something real once processed,
-        // whether or not this particular delivery advanced anything.
-        $newStatus = $po['status'] === 'preocr' ? 'open' : $po['status'];
-        if ($anyReceived) {
-            $newStatus = $allFulfilled ? 'closed' : 'prcv';
-        }
+        $newStatus = DiffEngine::statusFromHistory($po, $allVsForPo);
         if ($newStatus !== $po['status']) {
             POStore::setStatus($poCoreName, $newStatus);
         }

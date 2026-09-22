@@ -79,6 +79,22 @@ function poagent_render_head(string $title, int $cardWidth = 690): void
             padding: 6px 10px; cursor: pointer; font-size: 14px;
         }
         .remove-btn:hover { background: #f1b0b7; }
+        /* +/- quantity stepper (po_items.php) — lets a quantity be adjusted
+           without ever focusing the native number keyboard. On mobile,
+           focusing that keyboard can show a "previous/next field" accessory
+           bar that, if mis-tapped, sends focus back to the item-search box
+           — which reopens its dropdown immediately on focus, looking like
+           "the cursor jumped to the item list" (confirmed against a real
+           device). The stepper buttons avoid the keyboard entirely for the
+           common case; typing an exact quantity directly still works too. */
+        .qty-controls { display: flex; align-items: center; gap: 6px; }
+        .qty-controls input.qty { width: 56px; margin-bottom: 0; text-align: center; flex-shrink: 0; }
+        .qty-btn {
+            background: #2575a8; color: #fff; border: none; border-radius: 6px;
+            width: 34px; height: 34px; min-width: 34px; font-size: 18px; font-weight: bold;
+            line-height: 1; cursor: pointer; flex-shrink: 0; padding: 0;
+        }
+        .qty-btn:hover { background: #1a5c87; }
         .item-count-badge {
             display: inline-block; background: #2575a8; color: #fff; border-radius: 12px;
             padding: 2px 10px; font-size: 14px; margin-inline-start: 8px;

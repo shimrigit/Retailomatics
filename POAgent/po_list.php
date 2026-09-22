@@ -43,6 +43,11 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
         $vsList = VSStore::listForPo($coreName);
         $vsCount = count($vsList);
         $vsHasVariance = array_reduce($vsList, fn($carry, $v) => $carry || ($v['status'] ?? '') === 'variance', false);
+        // Same source of truth as po_view.php/dn_process_ocr.php — a pending
+        // photo's existence, not the PO's status string (see those files'
+        // comments for why the status alone can drift and shouldn't be
+        // trusted here).
+        $hasPending = DNStore::findPendingImage($coreName) !== null;
     ?>
     <tr>
         <td data-label="מס' הזמנה"><?= htmlspecialchars($po['unique_id'] ?? '') ?></td>
@@ -60,7 +65,7 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
                     &nbsp;<?= $vsHasVariance ? '⚠' : '✔' ?> <?= $vsCount ?>
                 <?php endif; ?>
             </a>
-            <?php if (($po['status'] ?? '') === 'preocr' && $isBou): ?>
+            <?php if ($hasPending && $isBou): ?>
                 &nbsp;|&nbsp;
                 <a href="dn_process_ocr.php?po_core_name=<?= urlencode($coreName) ?>">🔄 עבד OCR</a>
             <?php endif; ?>

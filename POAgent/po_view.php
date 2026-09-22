@@ -14,7 +14,9 @@ require_once __DIR__ . '/lib/POStore.php';
 require_once __DIR__ . '/lib/DNStore.php';
 require_once __DIR__ . '/lib/VSStore.php';
 require_once __DIR__ . '/lib/DiffEngine.php';
+require_once __DIR__ . '/lib/UserRoles.php';
 $generatorId = poagent_require_generator();
+$isBou = poagent_is_bou($generatorId);
 
 $coreName = $_GET['core_name'] ?? '';
 // Core names are always <user>_<supplier>_<ddmmyy-His>_PO#####, built
@@ -34,6 +36,12 @@ $vsByDnReference = [];
 foreach (VSStore::listForPo($coreName) as $vs) {
     $vsByDnReference[$vs['dn_reference'] ?? ''] = $vs;
 }
+// A photo an FU uploaded but no BOU has processed yet (see lib/UserRoles.php)
+// — DNStore::listForPo() above can't see it at all (it only finds finalized
+// DN JSON, which doesn't exist until OCR has run), so without this it looked
+// like the PO had no delivery at all, still inviting a new upload while one
+// was already pending.
+$pending = DNStore::findPendingImage($coreName);
 
 poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
 ?>
@@ -46,7 +54,7 @@ poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
     </div>
 
     <div class="poagent-sticky-fill" style="flex:3 1 900px; display:flex; flex-direction:column; gap:36px;">
-        <?php if (empty($dns)): ?>
+        <?php if (empty($dns) && $pending === null): ?>
             <p class="muted">טרם התקבלו תעודות משלוח עבור הזמנה זו.</p>
             <a class="btn" href="dn_select_po.php">📷 העלה תעודת משלוח</a>
         <?php else: ?>
@@ -92,6 +100,36 @@ poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
                     </div>
                 </div>
             <?php endforeach; ?>
+
+            <?php if ($pending !== null): ?>
+                <div>
+                    <h3 style="margin-top:0;color:#555">
+                        משלוח #<?= count($dns) + 1 ?> &nbsp;<span class="badge preocr">ממתין לעיבוד OCR</span>
+                    </h3>
+                    <div style="display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start;">
+                        <div style="flex:1 1 420px; min-width:0;">
+                            <h4 style="margin-top:0;color:#555">📄 תעודת משלוח (DN) — טרם עובדה</h4>
+                            <?php poagent_render_zoom_panel('DNdir/' . rawurlencode($pending['image_filename']), 'תמונת תעודת משלוח (ממתינה לעיבוד)', '65vh'); ?>
+                            <p class="muted row-gap">
+                                התמונה נשמרה וממתינה לעיבוד OCR על ידי צוות המשרד. לא ניתן להעלות תעודה
+                                נוספת עד שתמונה זו תעובד או תימחק.
+                            </p>
+                            <?php if ($isBou): ?>
+                                <a class="btn" href="dn_process_ocr.php?po_core_name=<?= urlencode($coreName) ?>">🔄 עבד OCR עכשיו</a>
+                                <div class="row-gap"></div>
+                            <?php endif; ?>
+                            <form method="post" action="dn_delete_pending.php"
+                                  onsubmit="return confirm('למחוק את התמונה הממתינה? ניתן יהיה להעלות תמונה חדשה מיד אחרי.');">
+                                <input type="hidden" name="po_core_name" value="<?= htmlspecialchars($coreName) ?>">
+                                <button type="submit" class="btn secondary">🗑️ מחק ותעלה מחדש</button>
+                            </form>
+                        </div>
+                        <div style="flex:1 1 420px; min-width:0;">
+                            <p class="muted">דוח שונות יופק לאחר עיבוד ה-OCR.</p>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
         <?php endif; ?>
     </div>
 

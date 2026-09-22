@@ -165,6 +165,43 @@ class DiffEngine
     }
 
     /**
+     * Cumulative status implied purely by a PO's existing VS history
+     * (ignoring any transient wrapper status like "preocr" — see
+     * lib/UserRoles.php) — 'open' (nothing received yet across any
+     * delivery), 'prcv' (some but not all), 'closed' (everything owed
+     * received). Shared by DNPipeline::finalizeDelivery()'s status
+     * transition and dn_delete_pending.php (what status a PO reverts to
+     * once a pending, not-yet-processed delivery is discarded — must
+     * reflect any PRIOR finalized deliveries, not just default to 'open'
+     * unconditionally).
+     */
+    public static function statusFromHistory(array $po, array $allVs): string
+    {
+        $receivedTotal = [];
+        foreach ($allVs as $v) {
+            foreach ($v['line_items'] ?? [] as $line) {
+                $barcode = (string) ($line['barcode'] ?? '');
+                $receivedTotal[$barcode] = ($receivedTotal[$barcode] ?? 0) + (int) ($line['dn_qty'] ?? 0);
+            }
+        }
+        $anyReceived = false;
+        $allFulfilled = true;
+        foreach ($po['items'] ?? [] as $item) {
+            $received = $receivedTotal[(string) $item['barcode']] ?? 0;
+            if ($received > 0) {
+                $anyReceived = true;
+            }
+            if ($received < (int) $item['qty']) {
+                $allFulfilled = false;
+            }
+        }
+        if (!$anyReceived) {
+            return 'open';
+        }
+        return $allFulfilled ? 'closed' : 'prcv';
+    }
+
+    /**
      * Plain-language variance summary, rolled up across ALL of a PO's VS
      * records passed in (not just one delivery) — explicit request: the raw
      * diff tables alone weren't "clear enough." Cumulative by design: the

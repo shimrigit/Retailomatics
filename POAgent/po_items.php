@@ -135,22 +135,44 @@ poagent_render_head("POAgent – פריטים: {$supplierId}", 780);
 
             const tdQty = document.createElement('td');
             tdQty.dataset.label = 'כמות';
+            const qtyControls = document.createElement('div');
+            qtyControls.className = 'qty-controls';
+
             const qtyInput = document.createElement('input');
             qtyInput.type = 'number';
             qtyInput.className = 'qty';
             qtyInput.min = '1';
             qtyInput.step = '1';
             qtyInput.value = item.qty;
-            qtyInput.addEventListener('change', () => {
-                const val = parseInt(qtyInput.value, 10);
+
+            // Shared by typing a value directly and the +/- buttons — 0 or
+            // blank removes the row, same as before.
+            function commitQty(val) {
                 if (!val || val <= 0) {
                     selected.delete(item.barcode);
                     renderPicked();
                     return;
                 }
                 item.qty = val;
-            });
-            tdQty.appendChild(qtyInput);
+                qtyInput.value = val;
+            }
+
+            qtyInput.addEventListener('change', () => commitQty(parseInt(qtyInput.value, 10)));
+
+            const minusBtn = document.createElement('button');
+            minusBtn.type = 'button';
+            minusBtn.className = 'qty-btn';
+            minusBtn.textContent = '－';
+            minusBtn.addEventListener('click', () => commitQty((parseInt(qtyInput.value, 10) || item.qty) - 1));
+
+            const plusBtn = document.createElement('button');
+            plusBtn.type = 'button';
+            plusBtn.className = 'qty-btn';
+            plusBtn.textContent = '＋';
+            plusBtn.addEventListener('click', () => commitQty((parseInt(qtyInput.value, 10) || item.qty) + 1));
+
+            qtyControls.append(minusBtn, qtyInput, plusBtn);
+            tdQty.appendChild(qtyControls);
 
             const tdRemove = document.createElement('td');
             const removeBtn = document.createElement('button');

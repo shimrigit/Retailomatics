@@ -1,8 +1,87 @@
 # OCR Subproject Documentation
 
 **Project Location:** `C:\xampp\htdocs\website`
-**Last Updated:** September 2, 2026
+**Last Updated:** September 26, 2026
 **Status:** Phase 1 Complete - Ready for Commercial Layer
+
+---
+
+## Recent Updates (September 26, 2026)
+
+### `whatsapp_app/MessageFetching.php` — batch-order price matching + "series" placeholder
+
+Two additions to how a captionless image's price gets resolved (builds on the two-pass
+forward/backward caption borrowing from Aug 10 — see §4 below), driven by the same customer
+sending images and prices as **separate batches** rather than one image+text pair at a time:
+
+- **Pass 3 — positional/order matching.** When all images arrive uncaptioned and all prices
+  arrive as separate number-only texts (in either order — a batch of texts can land entirely
+  before or entirely after the batch of images, since large photos take longer to upload), forward
+  and backward adjacency find nothing. New third pass: whatever's left uncaptioned after passes 1–2
+  is paired purely by **arrival order** — 1st leftover text ↔ 1st leftover image, 2nd ↔ 2nd, etc.
+  Adjacency (passes 1–2) still always wins first, so a normal image-then-its-price pair is
+  untouched by this. Verified with the user's own worked example (texts arriving as 3rd/7th/8th
+  message paired correctly with images arriving as 10th/11th/13th) plus a mixed adjacency+batch
+  case.
+- **"Series" placeholder ("X").** Some store owners don't know an item's price at send time and
+  write **`סדרה`** or **`סידרה`** (Hebrew: "product line/series" — price to be set later by hand
+  based on similar items already in that line) instead of a number. That word is now recognized
+  anywhere a number would be accepted (own caption, or a text in passes 1–3) — but only when the
+  text has **no number** in it; a real number always wins if both are present. Produces the literal
+  price-slot value **`X`** (plain ASCII, not the Hebrew word — kept out of filenames/code to avoid
+  Hebrew-encoding issues on Windows and downstream tools), e.g. `200926-065512 12 X.jpeg`.
+  - Confirmed against `NPharmonized`'s filename-validation regexes (`process_whatsapp.php`,
+    `confirm.php`, `stage_br.php` — all capture the price segment as `(.+)`, any non-empty text) —
+    `X` passes cleanly and reaches the manual BR-review stage as visible text.
+  - **Caveat:** `stage_dcl.php` / `stage_dcl_save.php` later `(float)`-cast that column for the CHP
+    price check. An unresolved `X` silently becomes `0.00` there with no error — so placeholders
+    must be replaced with a real number by the BR-review stage, before advancing further.
+- Refactor: both features share one choke point, `resolveCaptionValue()` (number →
+  `SERIES_PLACEHOLDER` → `''`), used by all three passes; `isSeriesPlaceholder()` matches both
+  spellings via `ס(י)?דרה`. `buildImageFilename()` now takes the already-resolved value directly
+  instead of re-extracting digits from raw text (which would have wiped out a placeholder).
+- All verified with ad-hoc PHP test harnesses (function-only extraction, no log/network side
+  effects) — not yet committed to git as of this writing.
+
+### `whatsapp_app/MessageFetching.php` — two selectable modes: Classic vs. Advanced (reply-based)
+
+Same file, same day — a second, larger change layered on top of the above. The script now
+**requires an explicit mode choice before it processes anything**: web run shows a chooser screen
+(two buttons, `?mode=classic` / `?mode=advanced`); CLI run requires `php MessageFetching.php
+<classic|advanced>` as the first argument (no argument/invalid value → usage printed to stderr,
+exit 1, nothing processed).
+
+- **Classic** = everything above (unchanged): every image gets saved; price comes from its own
+  caption or is borrowed from a nearby text via the three passes (forward/backward/positional).
+- **Advanced** (new) = built for a different customer workflow — WhatsApp **replies**, not nearby
+  texts. An image is only saved if it resolves to a price/placeholder from exactly one of:
+  1. its own caption (identical rule to Classic — same `resolveCaptionValue()`), or
+  2. a WhatsApp reply: a text message whose `context.id` (the Cloud API's quoted-message
+     reference) points at that specific image's own message `id`.
+  No forward/backward/positional borrowing in this mode — a text that is neither a caption nor a
+  reply targeting one specific image is **ignored entirely**, even sitting right next to an
+  uncaptioned image. An image with neither is **skipped — not downloaded at all** (not just left
+  with a blank price, unlike Classic) and counted separately in the final report line ("N with a
+  price or X ... , M without a reply — skipped").
+  - Worked example from the user, verified directly: images A/B/C uncaptioned, reply "24.9" → A,
+    reply "סדרה" → B, no reply → C. Result: A saved as `... 24.9.jpeg`, B saved as `... X.jpeg`, C
+    skipped entirely and counted in the "without a reply" total.
+  - סדרה/סידרה placeholder detection and own-caption handling are the exact same code path as
+    Classic (shared `resolveCaptionValue()`) — no divergence between modes there, per explicit
+    requirement.
+  - Edge case handled: if more than one reply targets the same image, the first one found (arrival
+    order) wins; later duplicate replies to that image are ignored.
+- Implementation: `resolveCaptionSources()` renamed to `resolveCaptionSourcesClassic()`; new
+  `resolveCaptionSourcesAdvanced()` builds a message-`id` → image-index map, then a reply map keyed
+  by `context.id`, and only returns entries for images that actually resolved (missing index =
+  caller must skip). New `renderModeChooser()` renders the CLI usage text or the web chooser page.
+- No real WhatsApp reply payloads exist yet in `webhook_log.txt` to test against — the reply
+  mechanism (`context.id` matching the replied-to message's own `id`) is per Meta's documented
+  Cloud API webhook format, not yet confirmed against a live captured payload. Worth a quick sanity
+  check the first time a real reply comes through.
+- Verified with an extended ad-hoc test harness (Classic regression unchanged; Advanced: the A/B/C
+  example, own-caption parity, orphan-text-ignored, no-number-no-placeholder-reply skipped,
+  duplicate-reply-first-wins) — not yet committed to git as of this writing.
 
 ---
 

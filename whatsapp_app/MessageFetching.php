@@ -10,7 +10,7 @@
 //
 // Image files are saved to whatsapp_images/ as:
 //   ddmmyy-hhmmss X Y.ext
-//     ddmmyy-hhmmss = the message's timestamp (UTC)
+//     ddmmyy-hhmmss = the message's timestamp in Israel time (Asia/Jerusalem)
 //     X             = serial number of the message among all logged objects
 //     Y             = the numeric price extracted from the image's caption
 //                     (any extra text alongside the number, e.g. "13.9 מבצע",
@@ -437,8 +437,12 @@ function isSeriesPlaceholder(string $text): bool {
 }
 
 function buildImageFilename(array $message, int $serial, string $captionSource): string {
+    // Israel local time (IST/IDT, DST-aware). The timezone is set explicitly
+    // because php.ini's date.timezone here is Europe/Berlin.
     $timestamp = (int)($message['timestamp'] ?? time());
-    $stamp     = gmdate('dmy-His', $timestamp);
+    $stamp     = (new DateTime('@' . $timestamp))
+        ->setTimezone(new DateTimeZone('Asia/Jerusalem'))
+        ->format('dmy-His');
 
     // $captionSource is already a resolved value (a number or
     // SERIES_PLACEHOLDER) from resolveCaptionValue() — just make it

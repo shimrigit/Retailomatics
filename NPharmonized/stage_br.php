@@ -28,41 +28,61 @@ if (empty($apiKey)) die('Error: OpenAI API key not configured.');
 // WhatsApp: "ddmmyy-hhmmss n y.jpeg"         — sorted by serial number n,
 //           NEVER by the embedded timestamp (arrival order is the source of
 //           truth; two images can share the same second).
-$allFiles  = glob($npDir . '/*.{jpg,jpeg,JPG,JPEG}', GLOB_BRACE) ?: [];
-$jpegItems = [];
+function collectJpegItems(string $npDir, string $harvestMode): array {
+    $allFiles  = glob($npDir . '/*.{jpg,jpeg,JPG,JPEG}', GLOB_BRACE) ?: [];
+    $jpegItems = [];
 
-if ($harvestMode === 'whatsapp') {
-    $pattern = '/^\d{6}-\d{6} (\d+) (.+)\.jpe?g$/i';
-    foreach ($allFiles as $fullPath) {
-        $fname = basename($fullPath);
-        if (preg_match($pattern, $fname, $m) && ctype_digit($m[1])) {
-            $jpegItems[] = [
-                'fullPath'     => $fullPath,
-                'fname'        => $fname,
-                'serial'       => (int)$m[1],
-                'dateTimePart' => $fname,
-                'price'        => $m[2],
-            ];
+    if ($harvestMode === 'whatsapp') {
+        $pattern = '/^\d{6}-\d{6} (\d+) (.+)\.jpe?g$/i';
+        foreach ($allFiles as $fullPath) {
+            $fname = basename($fullPath);
+            if (preg_match($pattern, $fname, $m) && ctype_digit($m[1])) {
+                $jpegItems[] = [
+                    'fullPath'     => $fullPath,
+                    'fname'        => $fname,
+                    'serial'       => (int)$m[1],
+                    'dateTimePart' => $fname,
+                    'price'        => $m[2],
+                ];
+            }
         }
-    }
-    usort($jpegItems, fn($a, $b) => $a['serial'] <=> $b['serial']);
-} else {
-    $pattern = '/^(\d{4}-\d{2}-\d{2} at \d{2}\.\d{2}\.\d{2}) ([\d.]+)\.jpe?g$/i';
-    foreach ($allFiles as $fullPath) {
-        $fname = basename($fullPath);
-        if (preg_match($pattern, $fname, $m)) {
-            preg_match('/^(\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})/', $m[1], $dt);
-            $sortKey = $dt[1].$dt[2].$dt[3].$dt[4].$dt[5].$dt[6];
-            $jpegItems[] = [
-                'fullPath'     => $fullPath,
-                'fname'        => $fname,
-                'sortKey'      => $sortKey,
-                'dateTimePart' => $m[1],
-                'price'        => $m[2],
-            ];
+        usort($jpegItems, fn($a, $b) => $a['serial'] <=> $b['serial']);
+    } else {
+        $pattern = '/^(\d{4}-\d{2}-\d{2} at \d{2}\.\d{2}\.\d{2}) ([\d.]+)\.jpe?g$/i';
+        foreach ($allFiles as $fullPath) {
+            $fname = basename($fullPath);
+            if (preg_match($pattern, $fname, $m)) {
+                preg_match('/^(\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})/', $m[1], $dt);
+                $sortKey = $dt[1].$dt[2].$dt[3].$dt[4].$dt[5].$dt[6];
+                $jpegItems[] = [
+                    'fullPath'     => $fullPath,
+                    'fname'        => $fname,
+                    'sortKey'      => $sortKey,
+                    'dateTimePart' => $m[1],
+                    'price'        => $m[2],
+                ];
+            }
         }
+        usort($jpegItems, fn($a, $b) => strcmp($a['sortKey'], $b['sortKey']));
     }
-    usort($jpegItems, fn($a, $b) => strcmp($a['sortKey'], $b['sortKey']));
+    return $jpegItems;
+}
+
+// The NP directory is on the Z:\ cloud-synced network drive, where Windows
+// caches directory listings for several seconds (SMB directory cache, ~10s
+// by default). Images the previous stage just copied in can therefore be
+// invisible to glob() for a few seconds — the page then showed "no JPEG
+// files found" even though they were there (going back and continuing
+// worked). So re-scan once a second, up to 20s, until the expected number of
+// images is visible: process_whatsapp.php passes how many it put there
+// (expected_images); without that (Manual mode), wait until at least one
+// appears. No delay at all when the files are already visible.
+$expectedImages = max(0, (int)($_POST['expected_images'] ?? 0));
+$jpegItems      = collectJpegItems($npDir, $harvestMode);
+for ($waited = 0; $waited < 20 && count($jpegItems) < max(1, $expectedImages); $waited++) {
+    sleep(1);
+    clearstatcache();
+    $jpegItems = collectJpegItems($npDir, $harvestMode);
 }
 
 // ── GPT barcode call ──────────────────────────────────────────────────────────

@@ -234,6 +234,7 @@ $gapsFound  = ($maxSerial - $minSerial + 1) !== count($serials);
         <input type="hidden" name="date"         value="<?= htmlspecialchars($date) ?>">
         <input type="hidden" name="dept_file"    value="<?= htmlspecialchars($deptFile) ?>">
         <input type="hidden" name="harvest_mode" value="whatsapp">
+        <input type="hidden" name="expected_images" value="<?= count($items) ?>">
         <input type="hidden" name="mode"         value="<?= htmlspecialchars($mode) ?>">
         <button type="submit" class="btn btn-next">אישור – עבור לקריאת ברקודים ←</button>
     </form>

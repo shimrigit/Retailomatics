@@ -2,7 +2,7 @@
 
 **Project Location:** `C:\xampp\htdocs\website\POAgent`
 **Spec:** `pre-demo` build, based on *Purchase Order & Delivery Note Matching System — Pre-Demo Development Spec (v3)* (Priority DB → 3 local directories, WhatsApp bot → web interface).
-**Last Updated:** September 15, 2026
+**Last Updated:** October 29, 2026 (latest: supplier catalogs named by pure supplier name, `SuppliersDB/` gitignored — see the end of §6)
 **Status:** Phase 1 complete (PO creation flow). DN ingestion pipeline complete end-to-end,
 including the human-in-the-loop Review screen and DN/VS visibility from the history list — photo
 import, OCR, manual correction, Diff Engine/VS generation, status transitions, and now DN/VS
@@ -106,7 +106,10 @@ POAgent/
 │                          (e.g. a "skip review" fast path) wouldn't have to duplicate it
 ├── tools/
 │   └── seed_demo_suppliers.php   Dev-only: (re)writes 3 placeholder supplier catalogs
-├── SuppliersDB/          supplier_<SupplierID>.xlsx catalogs (Barcode | ItemName | Price)
+├── SuppliersDB/          <supplier name>.xlsx catalogs — the file name IS the supplier name (pure name:
+│                         no "מחירון", no "בע״מ"). Columns found by header text (ברקוד / שם מוצר /
+│                         מחיר מחירון, or Barcode / ItemName / Price). Gitignored (real client data).
+│                         See the Oct 29, 2026 entries at the end of §6
 ├── POdir/                PO JSON records — gitignored (generated data, not source; see §4)
 ├── POcounter/             Atomic counter files — PO##### counter (.po_counter) AND, per explicit
 │                          request, every other POAgent counter lives here too (VSStore's per-PO
@@ -165,9 +168,10 @@ codebase) with **fictional** items/prices, ≤10 per supplier, per explicit requ
 | `Tnuva` | תנובה | 8 |
 | `Dansell` | דנסל | 6 |
 
-Real supplier catalogs can replace these files directly — same filename convention
+~~Real supplier catalogs can replace these files directly — same filename convention
 (`supplier_<SupplierID>.xlsx`) and column layout (`Barcode \| ItemName \| Price`), no code changes
-needed.
+needed.~~ Superseded Oct 29, 2026: real catalogs are named by supplier name and use the Priority
+export's columns. See "Supplier name = catalog file name" at the end of §6.
 
 ---
 
@@ -1331,3 +1335,61 @@ invisible to the one mechanism meant to process it.
 a throwaway test PO — deliberately stopped at loading the waiting page, GET-only/no side effects by
 design, without triggering the actual OCR run, so as not to interfere with the user's own live
 session) — now returns the waiting page (200) instead of bouncing (302 to `po_list.php`).
+
+### Change — supplier name = catalog file name; real Priority price lists supported (Oct 29, 2026)
+**Request:** stop using the `supplier_<ID>.xlsx` convention. The whole file name is the supplier
+name, and that name is what POAgent shows everywhere (screens, PO records, reports). Example:
+`פנזה שש שיווק בע״מ.xlsx` → supplier `פנזה שש שיווק בע״מ`.
+**What changed (only `lib/SupplierStore.php`; no caller changed, since everything already went
+through it):**
+- **Name from file:** every `*.xlsx` in `SuppliersDB/` is a supplier; name = file name without
+  `.xlsx`. A leading `מחירון ` is dropped, because the real Priority export (`מחירונים לפי ספק.zip`,
+  94 files) names them `מחירון <supplier>.xlsx`. Legacy `supplier_<ID>.xlsx` still maps to `<ID>`, so
+  Osem/Dansell/Tnuva and existing POs keep resolving. Skipped: Excel lock files (`~$…`) and
+  `POAGENT_SUPPLIER_IGNORE` = `דוח ספקים` (summary report) and `ללא ספק מועדף` (4,253 items with no
+  supplier).
+- **Columns by header, not position.** The Priority export's columns are `ברקוד | שם מוצר | ספק
+  מועדף | מספר ספק מועדף | מחיר מחירון`. The old reader took price from column C, which here is the
+  supplier's *name*, so every price would have been 0. Now barcode/name/price are located by
+  header text (`ברקוד`/`Barcode`, `שם מוצר`/`שם פריט`/`ItemName`, `מחיר מחירון`/`מחיר`/`Price`, with
+  `מחיר מחירון` preferred), falling back to A/B/C.
+- **Safety:** `exists()` / `pathFor()` accept only names that came from the actual file listing, so
+  a posted `supplier_id` can't become an arbitrary path (it used to be concatenated into one).
+- PO filenames are unchanged in shape: `poagent_sanitize_segment()` strips non-ASCII, so a Hebrew
+  supplier becomes the segment `x` (or e.g. `.1997` for `ט. א שיווק חשמל 1997 בע״מ`). The real name
+  is stored in the PO JSON's `supplier_id`, which is what every screen displays.
+**Verified:** against all 94 real price lists + the 3 demo files: 97 suppliers, names correct (no
+`מחירון` left), ignored files skipped, all 4,263 items load, prices from `מחיר מחירון` (e.g.
+דליטקס בע״מ 277.12), legacy Osem prices unchanged, `../…` / prefixed / unknown names rejected. Live
+HTTP with one real file copied in temporarily: supplier dropdown shows `פנזה שש שיווק בע״מ`, items
+page and order-confirm page render under that name (stopped before `po_create.php`, so no PO was
+written); test file removed afterwards.
+**Note for the user:** 1,640 of the 4,263 items have price 0 in the Priority export, so orders
+for them show ₪0.00 until the price lists are filled in.
+
+### Change — pure supplier names; SuppliersDB gitignored (Oct 29, 2026, same day)
+**Request:** (1) `SuppliersDB/` under gitignore; (2) the catalog files named with the pure supplier
+name, without `מחירון` and without `בע"מ`; (3) the system working with that convention.
+**What changed:**
+- **Files renamed once** (all 94 real price lists in `SuppliersDB/`): leading `מחירון ` and the word
+  בע״מ (also spelled `בע"מ` / `בעמ`, e.g. `קרביץ (1974) בעמ`) removed as a whole word, spacing
+  tidied, original dash spacing kept. E.g. `מחירון פנזה שש שיווק בע״מ.xlsx` → `פנזה שש שיווק.xlsx`,
+  `מחירון רדיוס - אגודה שיתופית חקלאית בע״מ.xlsx` → `רדיוס - אגודה שיתופית חקלאית.xlsx`. Dry run
+  first: 0 name collisions. New Priority exports must be renamed the same way before being dropped in.
+- **`SupplierStore`** simplified to the convention: name = file name without `.xlsx`, nothing
+  stripped (the `מחירון` / `supplier_` special cases from the entry above are gone). Only files
+  directly in `SuppliersDB/` count; sub-folders (the user's `Temp/`, which now holds the old demo
+  files, `דוח ספקים.xlsx` and `מחירון ללא ספק מועדף.xlsx`) are ignored. `POAGENT_SUPPLIER_IGNORE` kept
+  as a safety net if those are ever dropped in next to the catalogs. Column-by-header reading,
+  file-listing-only `exists()`, and everything else unchanged.
+- **Gitignore:** `POAgent/SuppliersDB/.gitignore` (`*` / `!.gitignore`, same pattern as `POdir/` /
+  `DNdir/`): real supplier data stays local. The 3 demo catalogs (`supplier_Osem/Dansell/Tnuva`)
+  were untracked (`git rm --cached`, staged, not committed). Existing POs for those demo suppliers
+  still display fine (the name comes from the PO JSON), but new orders can't be placed with them.
+  `tools/seed_demo_suppliers.php` still writes `supplier_<ID>.xlsx`; those would now show up as
+  suppliers literally named `supplier_Osem` etc.
+**Verified:** 94 suppliers, none containing `מחירון`/`בע״מ`, all 4,239 items load, prices from
+`מחיר מחירון` (קרביץ (1974) 475, דליטקס 277.12); `Osem`, the old prefixed name, a `Temp/…` path and
+`../…` all rejected. Live HTTP: dropdown lists the 94 names, items page and order-confirm page render
+for `קרביץ (1974)` with the correct total (2 × 475 = 950.00); stopped before `po_create.php`.
+`git check-ignore` confirms both top-level and `Temp/` files are ignored.

@@ -1,6 +1,6 @@
 ﻿
 $folder = "Z:\RetailomaticsCloud\RetailomaticsArchive\YBC"
-$barcode = "7290115180251"
+$barcode = "6978014290868"
 
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false

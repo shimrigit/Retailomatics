@@ -43,7 +43,18 @@ if (empty($items)) {
     exit;
 }
 
-$record = POStore::createPO($generatorId, $supplierId, $items, $_SESSION['poagent_display_name'] ?? null);
+// The form's date field is required and limited (po_confirm.php); this only
+// catches a bypassed/old browser. history.back() keeps the user's quantities.
+$deliveryDate = poagent_valid_delivery_date($_POST['delivery_date'] ?? null);
+if ($deliveryDate === null) {
+    poagent_render_head('POAgent – חסר תאריך אספקה');
+    echo '<h2>חסר תאריך אספקה</h2><p>יש לבחור תאריך אספקה מהיום והלאה.</p>'
+        . '<button type="button" class="btn" onclick="history.back()">חזרה</button>';
+    poagent_render_foot();
+    exit;
+}
+
+$record = POStore::createPO($generatorId, $supplierId, $items, $_SESSION['poagent_display_name'] ?? null, $deliveryDate);
 
 $_SESSION['poagent_last_po'] = $record;
 header('Location: po_success.php');

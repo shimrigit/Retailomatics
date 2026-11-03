@@ -72,6 +72,13 @@ poagent_render_head("POAgent – אישור הזמנה: {$supplierId}");
     <?php foreach ($selected as $line): ?>
         <input type="hidden" name="qty[<?= htmlspecialchars($line['barcode']) ?>]" value="<?= (int) $line['qty'] ?>">
     <?php endforeach; ?>
+    <?php // Required: Priority needs a delivery date (תאריך אספקה) on every order line. ?>
+    <p>
+        <label for="delivery_date"><strong>תאריך אספקה מבוקש:</strong></label>
+        <input type="date" id="delivery_date" name="delivery_date" required
+               min="<?= date('Y-m-d') ?>" max="<?= date('Y-m-d', strtotime('+1 year')) ?>"
+               style="font-size:18px;padding:6px">
+    </p>
     <button type="submit">✅ אשר וצור הזמנה</button>
 </form>
 

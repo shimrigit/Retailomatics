@@ -79,7 +79,7 @@ class POStore
      * blank (desktop, or no session name to pull from) falls back to
      * generator_id itself, which is already display-friendly there.
      */
-    public static function createPO(string $generatorId, string $supplierId, array $items, ?string $generatorName = null): array
+    public static function createPO(string $generatorId, string $supplierId, array $items, ?string $generatorName = null, ?string $deliveryDate = null): array
     {
         $poId = self::nextPoId();
         $timestamp = date('dmy-His');
@@ -102,6 +102,10 @@ class POStore
             'supplier_id'    => $supplierId,
             'date_generated' => date('c'),
             'status'         => 'open',
+            // Requested delivery date, Y-m-d — Priority requires one per order
+            // line (תאריך אספקה). Null for POs created without one (WhatsApp
+            // flow, older POs): priority_create.php asks for it then.
+            'delivery_date'  => $deliveryDate,
             'items'          => $items,
         ];
 
@@ -180,5 +184,39 @@ class POStore
         if ($newPath !== $current) {
             unlink($current);
         }
+    }
+
+    /**
+     * Records the PO's Priority counterpart in its JSON ("priority" key):
+     * the Priority order number (PO26..., which is NOT the POAgent PO#####),
+     * whether it was completed, totals, price differences. Its presence is
+     * what stops the same PO from being created in Priority twice. Status
+     * suffix and core name are unaffected.
+     */
+    public static function setPriorityInfo(string $coreName, ?array $info): void
+    {
+        self::updateField($coreName, 'priority', $info);
+    }
+
+    /** Sets the requested delivery date (Y-m-d) of a PO that has none yet. */
+    public static function setDeliveryDate(string $coreName, string $deliveryDate): void
+    {
+        self::updateField($coreName, 'delivery_date', $deliveryDate);
+    }
+
+    /** Sets (or, with null, removes) one top-level field of a PO's JSON. */
+    private static function updateField(string $coreName, string $field, $value): void
+    {
+        $paths = glob(POAGENT_PODIR . "/{$coreName}_*.json");
+        if (!$paths) {
+            throw new RuntimeException("PO not found: $coreName");
+        }
+        $data = json_decode(file_get_contents($paths[0]), true);
+        if ($value === null) {
+            unset($data[$field]);
+        } else {
+            $data[$field] = $value;
+        }
+        poagent_write_json_atomic($paths[0], $data);
     }
 }

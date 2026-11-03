@@ -17,6 +17,9 @@ poagent_render_head('POAgent – הזמנה נוצרה');
 <h2>✅ הזמנת רכש נוצרה</h2>
 <?php poagent_render_po_detail($record); ?>
 
+<?php poagent_render_priority_link($record); ?>
+<div class="row-gap"></div>
+
 <a class="btn" href="po_supplier.php">➕ הזמנה נוספת</a>
 <div class="row-gap"></div>
 <a class="btn secondary" href="po_list.php">📋 היסטוריית הזמנות</a>

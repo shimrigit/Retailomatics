@@ -2,7 +2,7 @@
 
 **Project Location:** `C:\xampp\htdocs\website\POAgent`
 **Spec:** `pre-demo` build, based on *Purchase Order & Delivery Note Matching System — Pre-Demo Development Spec (v3)* (Priority DB → 3 local directories, WhatsApp bot → web interface).
-**Last Updated:** October 29, 2026 (latest: supplier catalogs named by pure supplier name, `SuppliersDB/` gitignored — see the end of §6)
+**Last Updated:** November 3, 2026 (latest: Priority connection step 2 — Playwright, button "צור הזמנת רכש בפריוריטי", delivery date, §10)
 **Status:** Phase 1 complete (PO creation flow). DN ingestion pipeline complete end-to-end,
 including the human-in-the-loop Review screen and DN/VS visibility from the history list — photo
 import, OCR, manual correction, Diff Engine/VS generation, status transitions, and now DN/VS
@@ -1393,3 +1393,136 @@ name, without `מחירון` and without `בע"מ`; (3) the system working with 
 `../…` all rejected. Live HTTP: dropdown lists the 94 names, items page and order-confirm page render
 for `קרביץ (1974)` with the correct total (2 × 475 = 950.00); stopped before `po_create.php`.
 `git check-ignore` confirms both top-level and `Temp/` files are ignored.
+
+## 10. Priority connection (started Nov 2, 2026)
+
+**Goal:** a POAgent PO is also created in Priority. Built **step by step** by explicit request, so
+each step can be debugged before the next. Step 1 (instruction files for Claude in Chrome) was
+dropped after its first try; **step 2 (Playwright, Nov 3, 2026) is the current mechanism** — see
+below. Later: create automatically when the PO is approved and move the Priority status from טיוטא
+to נשלחה; goods reception (קבלת סחורה) against the PO.
+
+### Step 2 — Playwright, manual button "צור הזמנת רכש בפריוריטי" (Nov 3, 2026) — CURRENT
+**Debugging period:** sending is a manual button per PO, desktop only.
+
+**How it works:**
+- `priority_create.php?core_name=…` (linked from `po_view.php`, `po_success.php` and the new
+  "פריוריטי" column of `po_list.php`): shows the PO, the prerequisites, and the button. POST runs
+  `PriorityTasks::createPo()` synchronously (~2 s per line, ~20–40 s per order).
+- `lib/PriorityTasks.php` (rewritten): `buildOrder()` → `PriorityOutbox/<core>_<time>_order.json`,
+  then `proc_open` of `node C:\RetailAgents\Priority\create-po.js <order> --result … --shot …`
+  (cwd `C:\RetailAgents\Priority`, 240 s timeout, one run at a time via `PriorityOutbox/.run.lock`).
+  Every run leaves `_order.json`, `_result.json`, `_shot.png`, `_log.txt` in `PriorityOutbox/`
+  (gitignored) for debugging; the page also shows the screenshot + log on failure.
+- `create-po.js` (RetailAgents repo) attaches over CDP to the user's Chrome on port 9222
+  (`start-chrome-priority.bat`, profile `C:\RetailAgents\ChromeProfile`, gitignored). **The user logs
+  into Priority by hand — the script never types credentials.**
+- **Data mapping:** the price list's `ברקוד` column **is Priority's מק"ט**; the Priority supplier
+  number comes from `מספר ספק מועדף` (`SupplierStore::getPrioritySupplierNumber()`); the supplier name
+  shown by Priority is checked against POAgent's (ignoring בע"מ / quotes).
+- **Result in the PO JSON** (`POStore::setPriorityInfo()`), key `priority`: `po_number` (PO26…, which
+  is NOT the POAgent PO#####), `complete`, `status`, supplier, `total_before_vat`,
+  `price_differences`, `skipped_lines`, `error`, `run`, `earlier_attempts`, and `manual` (see below).
+  **A PO with a `po_number` is never sent again** (retry only for a partial one, which opens a new
+  Priority order — the partial one stays and must be handled by hand).
+
+**What the script does in Priority** (learned from the user's benchmark, PO26000070):
+- From any screen: closes screens with the X (answering "סגירת מסך": אישור, or ביטול when already on
+  the PO screen), leaves a full-screen order view with "חזרה לרשימה", recognizes the home screen
+  (greeting, no X), opens הזמנות רכש (PORDERS link / tile / top menu רכש), clicks חדש, and checks the
+  new order is empty — **it never types into an existing order.**
+- Header: מס' ספק + Enter → Priority fills שם ספק, תאריך, the order number and טיוטא.
+- Lines: click the row's מק"ט cell, מק"ט + Enter, Enter to כמות, quantity + Enter, delivery date as 6
+  digits (ddmmyy) + Enter. **Down Arrow** moves to the next row: leaving a row is what saves it, and
+  it scrolls the grid (clicking a row below the visible ~10 rows hits the scroll bar).
+- **Prices are never typed** (a changed line price changes the item's price everywhere): Priority
+  fills them; differences from POAgent are reported (yellow table), nothing is changed.
+- Finish: Down Arrow off the last row, wait for the total to match and "כל השינויים נשמרו".
+- Popups: answered with אישור automatically — "כבר התחברת למערכת כמשתמש" (same user logged in
+  elsewhere) and "פריט זה אינו רשום לספק" (user's decision: preferred items are registered to the
+  supplier). **"…לא קיים בעמודה 'מק"ט'"** (מק"ט not in Priority): the line is skipped (אישור, cell
+  cleared, next line goes into the same row) and reported — user's choice, option B: skip and go
+  on rather than stop the whole order. Any other popup stops the run, with a screenshot.
+- Errors with instructions on the page: CHROME_NOT_RUNNING, PRIORITY_NOT_OPEN,
+  PRIORITY_NOT_LOGGED_IN, PRIORITY_MANY_TABS, BUSY, ALREADY_CREATED, NO_DELIVERY_DATE,
+  NO_SUPPLIER_NUMBER, TIMEOUT, STOPPED (stopped mid-way — partial order recorded).
+
+**Delivery date (תאריך אספקה)** — Priority requires one per line, so POAgent now asks for it:
+required date field on `po_confirm.php` (today … +1 year, `poagent_valid_delivery_date()`), stored as
+`delivery_date` (Y-m-d) by `POStore::createPO()`, shown in the PO details. POs without one (WhatsApp
+flow — it doesn't ask yet — and older POs) get a date field on the Priority page before the run.
+
+**Priority states** (`poagent_priority_state()` in `ui_common.php`) and the `po_list.php` column:
+🟢 `sent` (PO26… number; also "הושלמה ידנית"), 🟠 `missing` ("PO26… · חסרים N" — lines skipped),
+🔴 `partial` ("חלקית PO26…"), 🟠 `pending` ("לא נשלחה" → link to send it), or "—" (not tracked).
+Above the table: "X הזמנות ממתינות לשליחה לפריוריטי" (+ partial / missing counts) and a
+"הצג רק ממתינות" filter — the queue is sent one by one (no "send all", by request). Only POs from
+the cutoff `POAGENT_PRIORITY_CUTOFF` = 2026-11-03 are tracked; older ones show "—" and wait for the
+cleanup before commercial operation (they can still be sent by hand from the PO page).
+
+**"סמן כהושלמה ידנית בפריוריטי"** (partial / missing orders): records `priority.manual` = who, when,
+an optional note of what was changed in Priority; the order counts as sent. **Implication:** from
+then on the Priority order may differ from the POAgent PO, so (a) a VS gap may exist only in POAgent,
+not in Priority, and (b) future automation (status נשלחה, goods reception) must go by the Priority
+order, not POAgent's copy. Not used by the VS yet — the flag is there for it.
+
+**Also in this step:** `po_items.php` — the item search list now also opens on a click in the search
+box (after picking an item the box kept the focus, so it reopened only after clicking elsewhere,
+e.g. the qty "1").
+
+**Tested against the real Priority** (company א.י.א.ק מלונאות, user miryam): orders PO00053–PO00057 →
+PO26000072–PO26000076, 2–15 lines, starting from the home screen, an order's lines screen, a "סגירת
+מסך" popup, and a full-screen order view. PO26000070/71 are the benchmark/test orders. Each failure
+along the way (titles, popups, home screen, overlay, grid scrolling) was fixed and re-tested with
+`create-po.js --navigate-only` (types nothing). **Not yet seen for real:** the skip of a missing מק"ט
+(written before the popup could be observed), the logged-out screen, the "כבר התחברת" and "אינו
+רשום לספק" popups.
+
+### Step 1 — instruction file per PO (Nov 2, 2026) — SUPERSEDED by step 2
+Dropped: the user stopped the first Claude-in-Chrome run (the instructions didn't match how a PO is
+opened in Priority). `buildCreatePo()`/`writeCreatePo()`, `priority_task.php` and the 🤖 links were
+removed in step 2; kept below as history.
+- **`lib/PriorityTasks.php`** (new): `writeCreatePo($po)` writes
+  `PriorityOutbox/<core_name>_create_po.md`, built by `buildCreatePo()`: the PO's data (POAgent
+  number, supplier name, **Priority supplier number**, order date, reference `POAgent PO#####`, items
+  with barcode/name/qty/POAgent price, total), the steps in Priority, the safety rules and an exact
+  report-back format. Temp + rename write, like everything else.
+- **Safety rules in the file:** draft (טיוטא) only, never change status; **never change a price**
+  (the office's Priority notes say changing a price on an order line changes the item's price
+  everywhere); change nothing but the new order; never log in or type credentials (stop and ask the
+  user); one order only; stop on anything unexpected, with a screenshot. Duplicate check first:
+  search Priority for the PO number before creating. Items found **by barcode only**, never picked
+  by name; unfound items are left out and reported. Read-back comparison at the end. The report asks
+  for "what the screens actually looked like", to correct the instructions from real runs (this
+  replaces a separate discovery session for now).
+- **`SupplierStore::getPrioritySupplierNumber()`** (new): reads the `מספר ספק מועדף` column of the
+  supplier's catalog (the Priority export has it on every row), e.g. פנזה שש שיווק → 5516396884.
+  Null if missing; the file then says to search the supplier by name and stop unless there's exactly
+  one match.
+- **`po_create.php`**: writes the file right after `POStore::createPO()`, in a try/catch: a failure is
+  only logged and never blocks or undoes the PO.
+- **`priority_task.php`** (new): shows a PO's instruction file as plain UTF-8 text (generates it on
+  demand if missing, e.g. for POs created before this step). Same core_name whitelist as `po_view.php`.
+- **Links** "🤖 הוראות ל-Priority (Claude בכרום)" on `po_success.php` and `po_view.php` (desktop
+  sessions only; phone users don't drive Priority). They open in a new tab.
+- **`PriorityOutbox/`**: gitignored (`*` / `!.gitignore`), like `POdir/`.
+- **How to use:** create the PO in POAgent → click the 🤖 link → in that Chrome tab, open Claude in
+  Chrome and say "follow the instructions on this page" (Priority must already be open and logged
+  in) → Claude reports back in the chat in the given format → bring that report back here to fix
+  the instructions.
+**Not done yet (next steps):** no record of the result inside POAgent (the Priority order number
+lives only in the Claude chat for now); no item mapping (items are searched by barcode in Priority,
+which may not be how Priority identifies them); goods receipt and send-PO not started.
+**Verified:** `php -l` clean on all touched/added files. The file generated for the real PO00052
+(אחים כהן ד.א. יבוא ושווק מזון, supplier no. 512404104, 3 lines, 415.20 ₪) through `priority_task.php`
+(200, text/plain UTF-8); unknown/`../` core_name → 404; `git status` shows only
+`PriorityOutbox/.gitignore`. Not yet run against Priority itself.
+
+### Fix — PO core_names with punctuation were unopenable (Nov 2, 2026)
+After the switch to Hebrew supplier names, `poagent_sanitize_segment()` (strip non-ASCII, `_`,
+spaces) left punctuation behind: `א.עקנין` → `..`, `טומהוק (י.ד) מזון` → `(.)`. Every page checks
+core_names against `/^[A-Za-z0-9_-]+$/`, so such a PO couldn't be opened, take a DN or get a VS.
+It happened for real: PO00052 (`user1_.._291026-222413_PO00052`). Fix: the sanitizer now keeps only
+`[A-Za-z0-9-]` (Hebrew suppliers → `x`, `ט. א שיווק חשמל 1997` → `1997`). PO00052 was repaired:
+file renamed to `user1_x_291026-222413_PO00052_open.json` and its `core_name` field updated (no
+DN/VS existed for it). Verified it opens in `po_view.php`; 0 unsafe names left in `POdir/`.

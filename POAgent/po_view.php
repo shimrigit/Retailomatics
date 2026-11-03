@@ -51,6 +51,7 @@ poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
 
     <div class="poagent-sticky-panel" style="flex:1 1 360px;">
         <?php poagent_render_po_detail($po); ?>
+        <?php poagent_render_priority_link($po); ?>
     </div>
 
     <div class="poagent-sticky-fill" style="flex:3 1 900px; display:flex; flex-direction:column; gap:36px;">

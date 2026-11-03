@@ -306,6 +306,14 @@ poagent_render_head("POAgent – פריטים: {$supplierId}", 780);
 
     searchInput.addEventListener('input', () => search(searchInput.value));
     searchInput.addEventListener('focus', () => search(searchInput.value));
+    // After picking an item the list closes but the box keeps the focus, so a
+    // click on it fires no 'focus' and the list stayed closed until the user
+    // clicked elsewhere (e.g. the qty) and back — reopen it on click too.
+    searchInput.addEventListener('click', () => {
+        if (acList.hidden) {
+            search(searchInput.value);
+        }
+    });
 
     searchInput.addEventListener('keydown', (e) => {
         if (acList.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {

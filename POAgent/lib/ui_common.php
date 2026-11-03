@@ -413,6 +413,9 @@ function poagent_render_po_detail(array $record): void
         <strong>ספק:</strong> <?= htmlspecialchars($record['supplier_id'] ?? '') ?>
         &nbsp; <strong>נוצר ע"י:</strong> <?= htmlspecialchars(poagent_generator_display($record)) ?>
         &nbsp; <strong>תאריך:</strong> <?= htmlspecialchars($dateFormatted) ?>
+        <?php if (!empty($record['delivery_date'])): ?>
+            &nbsp; <strong>תאריך אספקה:</strong> <?= htmlspecialchars(date('d/m/Y', strtotime($record['delivery_date']))) ?>
+        <?php endif; ?>
     </p>
     <p class="muted"><strong>שם קובץ (core name):</strong> <?= htmlspecialchars($record['core_name'] ?? '') ?></p>
 
@@ -433,6 +436,90 @@ function poagent_render_po_detail(array $record): void
             <td data-label="סה&quot;כ להזמנה"><strong><?= number_format($totalAgorot / 100, 2) ?> ₪</strong></td>
         </tr>
     </table>
+    <?php
+}
+
+/**
+ * Validates a posted delivery date (<input type="date">, Y-m-d): a real
+ * date, today or later, within a year. Returns it normalized, or null.
+ */
+function poagent_valid_delivery_date($raw): ?string
+{
+    if (!is_string($raw) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+        return null;
+    }
+    $date = DateTime::createFromFormat('!Y-m-d', $raw);
+    if (!$date || $date->format('Y-m-d') !== $raw) {
+        return null;
+    }
+    $today = new DateTime('today');
+    if ($date < $today || $date > (clone $today)->modify('+1 year')) {
+        return null;
+    }
+    return $raw;
+}
+
+// POs created from this date on are expected to be in Priority (the
+// Priority connection went live then); older ones are not flagged — they get
+// a cleanup when commercial operation starts.
+define('POAGENT_PRIORITY_CUTOFF', '2026-11-03');
+
+/**
+ * A PO's Priority state: 'sent' (in Priority, complete — or marked
+ * "completed manually"), 'missing' (in Priority, but some lines were skipped
+ * because their מק"ט isn't in Priority — needs handling), 'partial' (the run
+ * stopped half-way — needs checking), 'pending' (not sent yet), or null (not
+ * tracked: created before POAGENT_PRIORITY_CUTOFF, or cancelled).
+ */
+function poagent_priority_state(array $po): ?string
+{
+    $priority = $po['priority'] ?? null;
+    if (!empty($priority['po_number'])) {
+        if (!empty($priority['manual'])) {
+            return 'sent';
+        }
+        if (empty($priority['complete'])) {
+            return 'partial';
+        }
+        return empty($priority['skipped_lines']) ? 'sent' : 'missing';
+    }
+    if (($po['status'] ?? '') === 'cancelled'
+        || substr((string) ($po['date_generated'] ?? ''), 0, 10) < POAGENT_PRIORITY_CUTOFF) {
+        return null;
+    }
+    return 'pending';
+}
+
+/**
+ * The PO's Priority status under its details (po_view.php, po_success.php):
+ * the Priority order number once created, otherwise the
+ * "צור הזמנת רכש בפריוריטי" button (priority_create.php). Desktop only — the
+ * creation drives the Chrome on the office computer.
+ */
+function poagent_render_priority_link(array $po): void
+{
+    if (!empty($_SESSION['poagent_mobile'])) {
+        return;
+    }
+    $priority = $po['priority'] ?? null;
+    $state = poagent_priority_state($po);
+    $href = 'priority_create.php?core_name=' . urlencode($po['core_name'] ?? '');
+    ?>
+    <div class="row-gap"></div>
+    <?php if ($state === 'missing'): ?>
+        <p style="color:#8a4b00">⚠️ <strong>נפתחה בפריוריטי עם חוסרים:</strong> <?= htmlspecialchars($priority['po_number']) ?>
+            — <?= count($priority['skipped_lines']) ?> פריטים לא קיימים בפריוריטי ולא נכנסו
+            &nbsp;<a href="<?= htmlspecialchars($href) ?>">פרטים</a></p>
+    <?php elseif ($priority && !empty($priority['complete'])): ?>
+        <p>✅ <strong>נפתחה בפריוריטי:</strong> <?= htmlspecialchars($priority['po_number']) ?>
+            <?= !empty($priority['manual']) ? '(הושלמה ידנית)' : '' ?>
+            &nbsp;<a href="<?= htmlspecialchars($href) ?>">פרטים</a></p>
+    <?php elseif ($priority): ?>
+        <p style="color:#721c24">⚠️ <strong>נפתחה חלקית בפריוריטי:</strong> <?= htmlspecialchars($priority['po_number']) ?>
+            &nbsp;<a href="<?= htmlspecialchars($href) ?>">פרטים</a></p>
+    <?php else: ?>
+        <a class="btn" href="<?= htmlspecialchars($href) ?>">צור הזמנת רכש בפריוריטי</a>
+    <?php endif; ?>
     <?php
 }
 

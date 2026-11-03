@@ -90,6 +90,34 @@ class SupplierStore
     }
 
     /**
+     * The supplier's Priority supplier number, read from the catalog's
+     * "מספר ספק מועדף" column (same value on every row of the Priority
+     * export — the first non-empty one is used). Null if the column or
+     * value is missing (e.g. hand-made catalogs without it).
+     */
+    public static function getPrioritySupplierNumber(string $supplierId): ?string
+    {
+        if (!self::exists($supplierId)) {
+            return null;
+        }
+        $sheet = IOFactory::load(self::pathFor($supplierId))->getActiveSheet();
+        $lastIdx = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($sheet->getHighestDataColumn(1));
+        for ($i = 1; $i <= $lastIdx; $i++) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i);
+            if (!str_contains((string)$sheet->getCell("{$col}1")->getValue(), 'מספר ספק')) {
+                continue;
+            }
+            for ($row = 2, $last = $sheet->getHighestDataRow(); $row <= $last; $row++) {
+                $value = $sheet->getCell("$col$row")->getValue();
+                if ($value !== null && trim((string)$value) !== '') {
+                    return is_float($value) ? sprintf('%.0f', $value) : trim((string)$value);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * True if the supplier exists in the store. Only names that came from an
      * actual file listing are accepted, so a posted supplier value can never
      * be turned into an arbitrary file path.

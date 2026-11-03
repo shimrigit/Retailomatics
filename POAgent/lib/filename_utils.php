@@ -3,17 +3,18 @@
 // DataStore adapters (SupplierStore / POStore / future DNStore / VSStore).
 
 /**
- * Sanitize a value before it's used as a filename segment: strips
- * whitespace, underscores (the filename field separator), and non-ASCII
- * characters (e.g. Hebrew names) so filenames stay unambiguous to parse
- * back apart. The raw value is still stored in the JSON body — never
- * reconstructed from the sanitized filename (spec §6.2).
+ * Sanitize a value before it's used as a filename segment: keeps only ASCII
+ * letters, digits and "-". Everything else goes — underscores (the filename
+ * field separator), spaces, Hebrew, and punctuation such as "." "(" "'" —
+ * so the resulting core_name always matches the /^[A-Za-z0-9_-]+$/ whitelist
+ * every page checks before opening a PO/DN (a Hebrew supplier like
+ * "א.עקנין" used to leave ".." behind, making that PO unopenable). The raw
+ * value is still stored in the JSON body — never reconstructed from the
+ * sanitized filename (spec §6.2).
  */
 function poagent_sanitize_segment(string $value): string
 {
-    $value = preg_replace('/[^\x20-\x7E]/', '', $value); // strip non-ASCII
-    $value = str_replace(['_', ' '], '', $value);          // strip separators
-    $value = trim($value);
+    $value = preg_replace('/[^A-Za-z0-9-]/', '', $value);
     return $value !== '' ? $value : 'x'; // guard against a fully-stripped value
 }
 

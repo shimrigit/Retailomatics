@@ -2,7 +2,7 @@
 
 **Project Location:** `C:\xampp\htdocs\website\POAgent`
 **Spec:** `pre-demo` build, based on *Purchase Order & Delivery Note Matching System — Pre-Demo Development Spec (v3)* (Priority DB → 3 local directories, WhatsApp bot → web interface).
-**Last Updated:** November 3, 2026 (latest: Priority connection step 2 — Playwright, button "צור הזמנת רכש בפריוריטי", delivery date, §10)
+**Last Updated:** November 5, 2026 (latest: Priority connection step 3 — goods receipt "קבלת סחורה מספק בפריוריטי", §10)
 **Status:** Phase 1 complete (PO creation flow). DN ingestion pipeline complete end-to-end,
 including the human-in-the-loop Review screen and DN/VS visibility from the history list — photo
 import, OCR, manual correction, Diff Engine/VS generation, status transitions, and now DN/VS
@@ -1400,7 +1400,7 @@ for `קרביץ (1974)` with the correct total (2 × 475 = 950.00); stopped befo
 each step can be debugged before the next. Step 1 (instruction files for Claude in Chrome) was
 dropped after its first try; **step 2 (Playwright, Nov 3, 2026) is the current mechanism** — see
 below. Later: create automatically when the PO is approved and move the Priority status from טיוטא
-to נשלחה; goods reception (קבלת סחורה) against the PO.
+to נשלחה. Step 3 (Nov 4–5, 2026): goods receipt per delivery note.
 
 ### Step 2 — Playwright, manual button "צור הזמנת רכש בפריוריטי" (Nov 3, 2026) — CURRENT
 **Debugging period:** sending is a manual button per PO, desktop only.
@@ -1409,10 +1409,10 @@ to נשלחה; goods reception (קבלת סחורה) against the PO.
 - `priority_create.php?core_name=…` (linked from `po_view.php`, `po_success.php` and the new
   "פריוריטי" column of `po_list.php`): shows the PO, the prerequisites, and the button. POST runs
   `PriorityTasks::createPo()` synchronously (~2 s per line, ~20–40 s per order).
-- `lib/PriorityTasks.php` (rewritten): `buildOrder()` → `PriorityOutbox/<core>_<time>_order.json`,
+- `lib/PriorityTasks.php` (rewritten): `buildOrder()` → `PriorityOutbox/<core>_<time>_input.json`,
   then `proc_open` of `node C:\RetailAgents\Priority\create-po.js <order> --result … --shot …`
   (cwd `C:\RetailAgents\Priority`, 240 s timeout, one run at a time via `PriorityOutbox/.run.lock`).
-  Every run leaves `_order.json`, `_result.json`, `_shot.png`, `_log.txt` in `PriorityOutbox/`
+  Every run leaves `_input.json`, `_result.json`, `_shot.png`, `_log.txt` in `PriorityOutbox/`
   (gitignored) for debugging; the page also shows the screenshot + log on failure.
 - `create-po.js` (RetailAgents repo) attaches over CDP to the user's Chrome on port 9222
   (`start-chrome-priority.bat`, profile `C:\RetailAgents\ChromeProfile`, gitignored). **The user logs
@@ -1477,6 +1477,65 @@ along the way (titles, popups, home screen, overlay, grid scrolling) was fixed a
 `create-po.js --navigate-only` (types nothing). **Not yet seen for real:** the skip of a missing מק"ט
 (written before the popup could be observed), the logged-out screen, the "כבר התחברת" and "אינו
 רשום לספק" popups.
+
+### Step 3 — goods receipt, manual button "קבלת סחורה מספק בפריוריטי" (Nov 4–5, 2026) — CURRENT
+**Debugging period:** a manual button per delivery note, desktop only, after the DN's OCR review and
+variance report. The receipt is left as **טיוטא** — the user checks it and makes it **סופית** in
+Priority (that updates stock).
+
+**How it works:**
+- `poagent_render_priority_receive_link($po, $dn)` (under each delivery's VS in `po_view.php` and
+  `dn_result.php`) → `priority_receive.php?dn=<dn_core_name>`: the DN lines, the supplier DN number
+  and date (prefilled from the OCR, editable; date within the last year and **not in the future** —
+  Priority asks about a future date and creates the receipt anyway), the prerequisites, the button.
+- `PriorityTasks::receiveGoods()` → `buildReceipt()` (needs the PO complete in Priority: its
+  `priority.po_number` + `supplier_number`; lines = the reviewed DN items: barcode = מק"ט, qty,
+  unit_price) → `receive-goods.js`. `createPo()` and `receiveGoods()` share one runner
+  (`runScript()`, `<core>_<time>_input.json/_result.json/_shot.png/_log.txt`) and the run lock.
+- **Result in the DN JSON** (`DNStore::setPriorityInfo()`), key `priority`: `gr_number` (GR26…),
+  `complete`, `status`, `po_number`, `dn_number`, `date`, `total_before_vat`, `lines` (per line:
+  `action` approved / changed / not_delivered / extra, open, qty, prices, `priceChanged`,
+  `overReceived`), `skipped_lines`, `error`, `earlier_attempts`, `manual`. Recorded as soon as
+  Priority gives a GR number (the date alone creates the receipt), so a stopped run is known.
+- States (`poagent_priority_receipt_state()`): sent / missing / partial / pending / no_po (the PO is
+  not fully in Priority yet). History (`po_list.php`): "📥 N לקבלה" badge, count above the table,
+  included in "הצג רק ממתינות". "סמן כהושלמה ידנית בפריוריטי" exists for receipts too (a retry would
+  create a second receipt, and Priority refuses the same supplier DN number twice).
+- Order page: "📷 העלה תעודת משלוח נוספת" for an open / partly received PO (before, the upload
+  button showed only while a PO had no DN at all).
+
+**What the script does in Priority** (learned from the user's walkthrough, GR26000708 / PO26000080):
+- קבלות סחורה מספק (`DOCUMENTS_P`) → empty new receipt (חדש if needed; never types into an existing
+  one). Header: תאריך as 6 digits + Enter → Priority creates the receipt (GR26…, טיוטא); מס. ספק
+  (the PO's Priority supplier number) + Enter → שם ספק, checked; תעודת הספק = the DN number.
+- Tab "הזמנות רכש לתעודה": the cursor is in the first row; PO26… + Enter fills its date/supplier.
+- Tab "קבלות סחורה מספק - פירוט": Priority pulls the order's open lines with כמות 0 and the open
+  quantity in יתרה לקבלה. Per line (the user's rules): DN qty = open → ✔ אישור (Priority fills
+  כמות when the line is saved), a different price is typed first; other qty → כמות typed (Enter
+  jumps to מחיר ליחידה), price if different, no אישור — the order stays open for the rest; not on
+  the DN → left at 0; DN products not on the order → new lines (מק"ט, כמות, מחיר).
+- Popups: "הזמנת רכש … נמצאת בסטטוס טיוטא" → stop, PO_NOT_SENT (the order must be נשלחה first —
+  POAgent creates orders as טיוטא for now); "מספר זה כבר רשום לתעודה GR…" → ביטול, stop,
+  DN_NUMBER_USED; "כמות הקבלה גדולה מיתרת האספקה…" → אישור, reported (user's choice: accept, it can
+  be fixed in Priority while טיוטא); "הינך מוסיף לתעודה שורה שלא נלקחה מהזמנה" → אישור (extra lines
+  only).
+- Finish: the total before discount must match; when Priority doesn't refresh the totals area (seen
+  after an extra line) the lines' סה"כ מחיר on screen are added up instead.
+
+**Lessons from testing (fixed in `priority-common.js`, used by both scripts):** the screen can open
+already as an empty new record and still be loading (wait, then verify every header field before
+Enter); End in a header field jumps to the last field (fields are cleared by selecting their text);
+a click can be swallowed by an open list (שם ספק, סטטוס) or by a cell being edited (retried; on a
+receipt line the מק"ט cell is clicked first — the כמות cell entered by Down Arrow shows empty and
+blocks clicks on the line); "כל השינויים נשמרו" shows only briefly (saved = no "שומר שינויים…");
+the receipts tab bar names are exact ("קבלות סחורה מספק - פירוט") and the lines have a second tab bar
+below; on a 1280-point-wide (150% scaled) screen the receipt grid's יתרה לקבלה / אישור columns aren't
+rendered at all, so the receipt run lays the page out 1700 wide (CDP device metrics) and restores it.
+
+**Tested against the real Priority:** changed quantity (GR26000730), exact quantity in a second DN
+closing the PO (GR26000733), not delivered, several lines, an extra product (GR26000738), changed
+price; duplicate supplier DN number. Draft receipts from failed attempts were cancelled (מבוטלת) in
+Priority — they can't always be deleted. Not done from the phone: the receipt button is desktop only.
 
 ### Step 1 — instruction file per PO (Nov 2, 2026) — SUPERSEDED by step 2
 Dropped: the user stopped the first Claude-in-Chrome run (the instructions didn't match how a PO is

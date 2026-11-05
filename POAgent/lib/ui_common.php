@@ -523,6 +523,174 @@ function poagent_render_priority_link(array $po): void
     <?php
 }
 
+/**
+ * What to tell the user for each Priority run outcome code shared by
+ * priority_create.php and priority_receive.php (see PriorityTasks): [what
+ * happened, what to do] — HTML. Each page adds its own codes.
+ */
+function poagent_priority_error_help(): array
+{
+    return [
+        'CHROME_NOT_RUNNING' => ['כרום לא פתוח במצב חיבור לפריוריטי.',
+            'סגור את כל חלונות הכרום, והפעל את <b>C:\RetailAgents\Priority\start-chrome-priority.bat</b> (או את הפקודה בסעיף 2 למטה). התחבר לפריוריטי בחלון שנפתח ולחץ שוב.'],
+        'PRIORITY_NOT_OPEN' => ['כרום פתוח, אבל אין בו לשונית של פריוריטי.',
+            'בחלון הכרום שנפתח במצב חיבור, פתח את <b>https://p.priority-connect.online/webui/B4B4F/</b>, התחבר, ולחץ שוב.'],
+        'PRIORITY_NOT_LOGGED_IN' => ['פריוריטי פתוח אבל לא מחובר.',
+            'התחבר לפריוריטי עם שם המשתמש והסיסמה שלך (המערכת לעולם לא מקלידה סיסמה), ולחץ שוב.'],
+        'PRIORITY_MANY_TABS' => ['פתוחה יותר מלשונית אחת של פריוריטי.',
+            'סגור את הלשוניות המיותרות — השאר לשונית פריוריטי אחת בלבד — ולחץ שוב.'],
+        'BUSY' => ['פעולה אחרת רצה בפריוריטי ברגע זה.', 'המתן שהיא תסתיים ונסה שוב.'],
+        'TIMEOUT' => ['הפעולה לא הסתיימה בזמן ונעצרה.', 'בדוק את מסך פריוריטי לפני כל פעולה נוספת.'],
+        'SCRIPT_FAILED' => ['סקריפט הפריוריטי לא רץ או לא החזיר תוצאה.', 'ראה את הלוג למטה.'],
+        'STOPPED' => ['הסקריפט עצר באמצע, בכוונה, כי משהו לא היה כצפוי.',
+            'שום דבר נוסף לא הוקלד. בדוק את מסך פריוריטי (צילום מסך למטה).'],
+        'ERROR' => ['שגיאה לא צפויה.', 'ראה את הפרטים והלוג למטה.'],
+    ];
+}
+
+/** The outcome box of a Priority run that failed ($help: code => [what, todo]). */
+function poagent_render_priority_error(array $run, array $help, array $noDetails = []): void
+{
+    [$what, $todo] = $help[$run['code']] ?? $help['ERROR'];
+    ?>
+    <div style="background:#f8d7da;color:#721c24;padding:14px;border-radius:8px">
+        <b>❌ <?= $what ?></b><br><?= $todo ?>
+        <?php if ($run['message'] !== '' && !in_array($run['code'], $noDetails, true)): ?>
+            <br><span style="font-size:14px">פרטים: <?= htmlspecialchars($run['message']) ?></span>
+        <?php endif; ?>
+    </div>
+    <?php
+}
+
+/** "Before clicking" — what must be ready for a Priority run. $extra: more <li> HTML items. */
+function poagent_render_priority_prerequisites(string $target, array $extra = []): void
+{
+    $chromeCmd = '"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\RetailAgents\ChromeProfile"';
+    ?>
+    <h3>לפני הלחיצה — לוודא:</h3>
+    <ol style="line-height:1.8">
+        <li>אתה עובד <b>על המחשב של המשרד</b> (המחשב שעליו רץ POAgent) — הפעולה נעשית בכרום של המחשב הזה.</li>
+        <li><b>כרום פתוח במצב חיבור:</b> סגור את כל חלונות הכרום והפעל
+            <b>C:\RetailAgents\Priority\start-chrome-priority.bat</b>, או ב-CMD:
+            <pre dir="ltr" style="white-space:pre-wrap;background:#f4f4f4;padding:8px;font-size:13px"><?= htmlspecialchars($chromeCmd) ?></pre></li>
+        <li><b>מחובר לפריוריטי</b> בחלון הזה, בלשונית <b>אחת</b> בלבד. אפשר להשאיר אותו על כל מסך — המערכת תגיע לבד ל<?= htmlspecialchars($target) ?>.</li>
+        <li>אין בפריוריטי עבודה פתוחה שלא נשמרה (המערכת סוגרת מסכים פתוחים).</li>
+        <?php foreach ($extra as $item): ?>
+            <li><?= $item ?></li>
+        <?php endforeach; ?>
+        <li><b>לא לגעת</b> בעכבר ובמקלדת בחלון הכרום עד לסיום (כחצי דקה).</li>
+    </ol>
+    <?php
+}
+
+/** The debug section after a Priority run: Priority's screenshot and the script's log. */
+function poagent_render_priority_debug(?array $run): void
+{
+    if ($run === null || ($run['ok'] && $run['log'] === '')) {
+        return;
+    }
+    ?>
+    <div class="row-gap"></div>
+    <details <?= $run['ok'] ? '' : 'open' ?>>
+        <summary>פרטים לדיבאג</summary>
+        <?php if ($run['shot']): ?>
+            <p>צילום מסך של פריוריטי בסוף הריצה:</p>
+            <img src="data:image/png;base64,<?= base64_encode((string) file_get_contents($run['shot'])) ?>"
+                 style="max-width:100%;border:1px solid #ccc" alt="Priority screenshot">
+        <?php endif; ?>
+        <pre dir="ltr" style="white-space:pre-wrap;background:#f4f4f4;padding:8px;font-size:12px"><?= htmlspecialchars($run['log']) ?></pre>
+    </details>
+    <?php
+}
+
+/**
+ * A delivery note's goods-receipt state in Priority: 'sent' (receipt GR26...
+ * complete), 'missing' (complete, but extra products whose מק"ט isn't in
+ * Priority were left out), 'partial' (the run stopped half-way), 'pending'
+ * (not sent yet), 'no_po' (its PO isn't fully in Priority yet — create that
+ * first), or null (the PO isn't tracked for Priority, see poagent_priority_state()).
+ */
+function poagent_priority_receipt_state(array $po, array $dn): ?string
+{
+    $receipt = $dn['priority'] ?? null;
+    if (!empty($receipt['gr_number'])) {
+        if (!empty($receipt['manual'])) {
+            return 'sent';
+        }
+        if (empty($receipt['complete'])) {
+            return 'partial';
+        }
+        return empty($receipt['skipped_lines']) ? 'sent' : 'missing';
+    }
+    $poState = poagent_priority_state($po);
+    if ($poState === null) {
+        return null;
+    }
+    return in_array($poState, ['sent', 'missing'], true) ? 'pending' : 'no_po';
+}
+
+/**
+ * Under a delivery note's variance report (po_view.php, dn_result.php): its
+ * Priority receipt number once made, otherwise the "קבלת סחורה מספק
+ * בפריוריטי" button (priority_receive.php). Desktop only, like the PO button.
+ */
+function poagent_render_priority_receive_link(array $po, array $dn): void
+{
+    $state = poagent_priority_receipt_state($po, $dn);
+    if (!empty($_SESSION['poagent_mobile']) || $state === null) {
+        return;
+    }
+    $receipt = $dn['priority'] ?? null;
+    $href = 'priority_receive.php?dn=' . urlencode($dn['dn_core_name'] ?? '');
+    ?>
+    <div class="row-gap"></div>
+    <?php if ($state === 'sent' || $state === 'missing'): ?>
+        <p><?= $state === 'sent' ? '✅' : '⚠️' ?> <strong>נקלטה בפריוריטי:</strong> <?= htmlspecialchars($receipt['gr_number']) ?>
+            (<?= htmlspecialchars((string) ($receipt['status'] ?? '')) ?>)
+            <?= $state === 'missing' ? ' — ' . count($receipt['skipped_lines']) . ' פריטים לא נקלטו' : '' ?>
+            &nbsp;<a href="<?= htmlspecialchars($href) ?>">פרטים</a></p>
+    <?php elseif ($state === 'partial'): ?>
+        <p style="color:#721c24">⚠️ <strong>נקלטה חלקית בפריוריטי:</strong> <?= htmlspecialchars($receipt['gr_number']) ?>
+            &nbsp;<a href="<?= htmlspecialchars($href) ?>">פרטים</a></p>
+    <?php elseif ($state === 'no_po'): ?>
+        <p class="muted">קבלת סחורה בפריוריטי — אפשרית אחרי שההזמנה תיפתח בפריוריטי במלואה.</p>
+    <?php else: ?>
+        <a class="btn" href="<?= htmlspecialchars($href) ?>">📥 קבלת סחורה מספק בפריוריטי</a>
+    <?php endif; ?>
+    <?php
+}
+
+/**
+ * The delivery note's date as read by the OCR ("17/09/2026", "17.09.26",
+ * "2026-09-17"...) as Y-m-d, or null if it can't be read as a date.
+ */
+function poagent_parse_dn_date($raw): ?string
+{
+    $raw = trim((string) $raw);
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $raw, $m)) {
+        [$y, $mo, $d] = [(int) $m[1], (int) $m[2], (int) $m[3]];
+    } elseif (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2}|\d{4})$/', $raw, $m)) {
+        [$d, $mo, $y] = [(int) $m[1], (int) $m[2], (int) $m[3]];
+        $y += $y < 100 ? 2000 : 0;
+    } else {
+        return null;
+    }
+    return checkdate($mo, $d, $y) ? sprintf('%04d-%02d-%02d', $y, $mo, $d) : null;
+}
+
+/**
+ * Validates a posted delivery-note date (<input type="date">, Y-m-d): a real
+ * date within the last year, not in the future (Priority asks about a future date). Returns it, or null.
+ */
+function poagent_valid_dn_date($raw): ?string
+{
+    $date = is_string($raw) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw) ? poagent_parse_dn_date($raw) : null;
+    if ($date === null) {
+        return null;
+    }
+    return $date >= date('Y-m-d', strtotime('-1 year')) && $date <= date('Y-m-d') ? $date : null;
+}
+
 function poagent_agorot_to_ils(int $agorot): string
 {
     return number_format($agorot / 100, 2) . ' ₪';

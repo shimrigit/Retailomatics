@@ -68,6 +68,7 @@ poagent_render_head('POAgent – תוצאת עיבוד תעודת המשלוח',
             // po_view.php's running per-delivery summary.
             $allVsForPo = VSStore::listForPo($po['core_name'] ?? '');
             poagent_render_variance_summary(DiffEngine::summarizeForPo($po, $allVsForPo));
+            poagent_render_priority_receive_link($po, $dn);
         ?>
 
         <div class="row-gap"></div>

@@ -93,6 +93,7 @@ poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
                                     // including THIS delivery — same "remaining" philosophy
                                     // as the Diff Engine itself, not just this one VS in isolation.
                                     poagent_render_variance_summary(DiffEngine::summarizeForPo($po, $vsRecordsSoFar));
+                                    poagent_render_priority_receive_link($po, $dn);
                                 ?>
                             <?php else: ?>
                                 <p class="muted">לא נמצא דוח שונות עבור תעודה זו.</p>
@@ -101,6 +102,14 @@ poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
                     </div>
                 </div>
             <?php endforeach; ?>
+
+            <?php // The next delivery of a partly received PO (one pending photo at a time — see dn_select_po.php).
+            if ($pending === null && in_array($po['status'] ?? '', ['open', 'prcv'], true)): ?>
+                <div>
+                    <a class="btn" href="<?= !empty($_SESSION['poagent_mobile']) ? 'dn_capture.php' : 'dn_browse.php' ?>?po_core_name=<?= urlencode($coreName) ?>">
+                        📷 העלה תעודת משלוח נוספת</a>
+                </div>
+            <?php endif; ?>
 
             <?php if ($pending !== null): ?>
                 <div>

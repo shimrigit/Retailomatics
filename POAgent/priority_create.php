@@ -43,29 +43,13 @@ $priority = $po['priority'] ?? null;
 $state = poagent_priority_state($po);
 $supplierNo = SupplierStore::getPrioritySupplierNumber($po['supplier_id']);
 
-const CHROME_CMD = '"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\RetailAgents\ChromeProfile"';
-
 // What to tell the user for each outcome code (see PriorityTasks::createPo()).
-$errorHelp = [
-    'CHROME_NOT_RUNNING' => ['כרום לא פתוח במצב חיבור לפריוריטי.',
-        'סגור את כל חלונות הכרום, והפעל את <b>C:\RetailAgents\Priority\start-chrome-priority.bat</b> (או את הפקודה בסעיף 1 למטה). התחבר לפריוריטי בחלון שנפתח ולחץ שוב.'],
-    'PRIORITY_NOT_OPEN' => ['כרום פתוח, אבל אין בו לשונית של פריוריטי.',
-        'בחלון הכרום שנפתח במצב חיבור, פתח את <b>https://p.priority-connect.online/webui/B4B4F/</b>, התחבר, ולחץ שוב.'],
-    'PRIORITY_NOT_LOGGED_IN' => ['פריוריטי פתוח אבל לא מחובר.',
-        'התחבר לפריוריטי עם שם המשתמש והסיסמה שלך (המערכת לעולם לא מקלידה סיסמה), ולחץ שוב.'],
-    'PRIORITY_MANY_TABS' => ['פתוחה יותר מלשונית אחת של פריוריטי.',
-        'סגור את הלשוניות המיותרות — השאר לשונית פריוריטי אחת בלבד — ולחץ שוב.'],
-    'BUSY' => ['הזמנה אחרת נפתחת בפריוריטי ברגע זה.', 'המתן שהיא תסתיים ונסה שוב.'],
+$errorHelp = poagent_priority_error_help() + [
     'ALREADY_CREATED' => ['ההזמנה כבר נפתחה בפריוריטי.', 'לא נפתחה הזמנה נוספת.'],
     'NO_DELIVERY_DATE' => ['להזמנה אין תאריך אספקה, ופריוריטי דורש תאריך אספקה בכל שורה.',
         'בחר תאריך אספקה (מהיום והלאה) בשדה שמעל הכפתור ולחץ שוב.'],
     'NO_SUPPLIER_NUMBER' =>['לא נמצא מספר ספק של פריוריטי במחירון של הספק.',
         'בדוק שבקובץ המחירון ב-SuppliersDB יש עמודת "מספר ספק מועדף" עם ערך.'],
-    'TIMEOUT' => ['הפעולה לא הסתיימה בזמן ונעצרה.', 'בדוק את מסך פריוריטי לפני כל פעולה נוספת.'],
-    'SCRIPT_FAILED' => ['סקריפט הפריוריטי לא רץ או לא החזיר תוצאה.', 'ראה את הלוג למטה.'],
-    'STOPPED' => ['הסקריפט עצר באמצע, בכוונה, כי משהו לא היה כצפוי.',
-        'שום דבר נוסף לא הוקלד. בדוק את מסך פריוריטי (צילום מסך למטה).'],
-    'ERROR' => ['שגיאה לא צפויה.', 'ראה את הפרטים והלוג למטה.'],
 ];
 
 poagent_render_head('POAgent – פריוריטי ' . $po['unique_id'], 1000);
@@ -93,13 +77,7 @@ poagent_render_head('POAgent – פריוריטי ' . $po['unique_id'], 1000);
             (סטטוס <?= htmlspecialchars($priority['status'] ?? '') ?>)
         </div>
     <?php else: ?>
-        <?php [$what, $todo] = $errorHelp[$run['code']] ?? $errorHelp['ERROR']; ?>
-        <div style="background:#f8d7da;color:#721c24;padding:14px;border-radius:8px">
-            <b>❌ <?= $what ?></b><br><?= $todo ?>
-            <?php if ($run['message'] !== '' && $run['code'] !== 'ALREADY_CREATED'): ?>
-                <br><span style="font-size:14px">פרטים: <?= htmlspecialchars($run['message']) ?></span>
-            <?php endif; ?>
-        </div>
+        <?php poagent_render_priority_error($run, $errorHelp, ['ALREADY_CREATED']); ?>
     <?php endif; ?>
     <div class="row-gap"></div>
 <?php endif; ?>
@@ -191,16 +169,7 @@ poagent_render_head('POAgent – פריוריטי ' . $po['unique_id'], 1000);
 
 <?php // A run is offered for an order not yet in Priority, or to retry one that stopped half-way.
 if (!$priority || $state === 'partial'): ?>
-    <h3>לפני הלחיצה — לוודא:</h3>
-    <ol style="line-height:1.8">
-        <li>אתה עובד <b>על המחשב של המשרד</b> (המחשב שעליו רץ POAgent) — ההזמנה נפתחת בכרום של המחשב הזה.</li>
-        <li><b>כרום פתוח במצב חיבור:</b> סגור את כל חלונות הכרום והפעל
-            <b>C:\RetailAgents\Priority\start-chrome-priority.bat</b>, או ב-CMD:
-            <pre dir="ltr" style="white-space:pre-wrap;background:#f4f4f4;padding:8px;font-size:13px"><?= htmlspecialchars(CHROME_CMD) ?></pre></li>
-        <li><b>מחובר לפריוריטי</b> בחלון הזה, בלשונית <b>אחת</b> בלבד. אפשר להשאיר אותו על כל מסך — המערכת תגיע לבד להזמנות רכש.</li>
-        <li>אין בפריוריטי עבודה פתוחה שלא נשמרה (המערכת סוגרת מסכים פתוחים).</li>
-        <li><b>לא לגעת</b> בעכבר ובמקלדת בחלון הכרום עד לסיום (כחצי דקה).</li>
-    </ol>
+    <?php poagent_render_priority_prerequisites('הזמנות רכש'); ?>
     <p class="muted">
         ספק: <?= htmlspecialchars($po['supplier_id']) ?> — מספר ספק בפריוריטי:
         <b><?= htmlspecialchars($supplierNo ?? 'לא נמצא') ?></b> ·
@@ -231,18 +200,7 @@ if (!$priority || $state === 'partial'): ?>
     </form>
 <?php endif; ?>
 
-<?php if ($run !== null && (!$run['ok'] || $run['log'] !== '')): ?>
-    <div class="row-gap"></div>
-    <details <?= $run['ok'] ? '' : 'open' ?>>
-        <summary>פרטים לדיבאג</summary>
-        <?php if ($run['shot']): ?>
-            <p>צילום מסך של פריוריטי בסוף הריצה:</p>
-            <img src="data:image/png;base64,<?= base64_encode((string) file_get_contents($run['shot'])) ?>"
-                 style="max-width:100%;border:1px solid #ccc" alt="Priority screenshot">
-        <?php endif; ?>
-        <pre dir="ltr" style="white-space:pre-wrap;background:#f4f4f4;padding:8px;font-size:12px"><?= htmlspecialchars($run['log']) ?></pre>
-    </details>
-<?php endif; ?>
+<?php poagent_render_priority_debug($run); ?>
 
 <div class="row-gap"></div>
 <a class="btn secondary" href="po_view.php?core_name=<?= urlencode($coreName) ?>">הצג הזמנה</a>

@@ -176,6 +176,32 @@ class DNStore
         poagent_write_json_atomic($path, $data);
     }
 
+    /** One finalized DN record by its core name, or null. */
+    public static function loadByCoreName(string $dnCoreName): ?array
+    {
+        if (!preg_match('/^[A-Za-z0-9_-]+$/', $dnCoreName)) {
+            return null;
+        }
+        $path = POAGENT_DNDIR . "/{$dnCoreName}.json";
+        $data = is_file($path) ? json_decode((string) file_get_contents($path), true) : null;
+        return is_array($data) ? $data : null;
+    }
+
+    /**
+     * The DN's goods receipt in Priority (GR26..., see
+     * PriorityTasks::receiveGoods()) — stored in the DN record's "priority"
+     * field, like a PO's Priority order (POStore::setPriorityInfo()).
+     */
+    public static function setPriorityInfo(string $dnCoreName, array $info): void
+    {
+        $data = self::loadByCoreName($dnCoreName);
+        if ($data === null) {
+            throw new RuntimeException("DN not found: $dnCoreName");
+        }
+        $data['priority'] = $info;
+        poagent_write_json_atomic(POAGENT_DNDIR . "/{$dnCoreName}.json", $data);
+    }
+
     /**
      * The pending, not-yet-OCR'd photo for a PO — an FU's upload (see
      * UserRoles.php) saves the image via importImage()/importUploadedImage()

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/flow_mode.php';
+require_once __DIR__ . '/wa_source.php';
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['shop']) || empty($_POST['date'])) {
@@ -13,6 +14,7 @@ $shop        = basename($_POST['shop']);
 $rootLetter  = strtoupper(trim($_POST['root_letter'] ?? 'Z'));
 if (!preg_match('/^[A-Za-z]$/', $rootLetter)) $rootLetter = 'Z';
 $harvestMode = ($_POST['harvest_mode'] ?? 'manual') === 'whatsapp' ? 'whatsapp' : 'manual';
+$waSource    = npWaSource();
 $mode        = npFlowMode();
 
 // ── Date parts ────────────────────────────────────────────────────────────────
@@ -52,8 +54,8 @@ if ($harvestMode === 'whatsapp') {
     }
     $npDirExists = is_dir($npDir);
 
-    // ── Validate images staged in whatsapp_app/whatsapp_images ────────────────
-    $whatsappImagesDir = __DIR__ . '/../whatsapp_app/whatsapp_images';
+    // ── Validate the images staged by the chosen WhatsApp source ──────────────
+    $whatsappImagesDir = npWaImagesDir($waSource);
     $waPattern = '/^\d{6}-\d{6} (\d+) (.+)\.jpe?g$/i';
     $waFiles   = glob($whatsappImagesDir . '/*.{jpg,jpeg,JPG,JPEG}', GLOB_BRACE) ?: [];
 
@@ -180,7 +182,7 @@ if ($harvestMode === 'whatsapp') {
     </tr>
     <tr>
         <td class="lbl">אופן איסוף תמונות</td>
-        <td class="val"><?= $harvestMode === 'whatsapp' ? 'WhatsApp' : 'ידני' ?></td>
+        <td class="val"><?= $harvestMode === 'whatsapp' ? htmlspecialchars(npWaSourceLabel($waSource)) : 'ידני' ?></td>
         <td class="ico"></td>
     </tr>
 </table>
@@ -212,6 +214,7 @@ if ($harvestMode === 'whatsapp') {
     <tr>
         <td class="lbl">תמונות בתיקיית WhatsApp</td>
         <td class="val">
+            <div style="direction:ltr;text-align:right;font-size:14px;color:#777"><?= htmlspecialchars(str_replace('/', '\\', $whatsappImagesDir)) ?></div>
             <strong><?= $waCount ?></strong> תמונות תקינות
             <?php if (!$waNamingOk): ?>
                 <div class="note warn">⚠️ שמות קבצים לא תואמים למוסכמה "ddmmyy-hhmmss n y":</div>
@@ -327,6 +330,7 @@ if ($harvestMode === 'whatsapp') {
         <input type="hidden" name="np_dir"       value="<?= htmlspecialchars($npDir) ?>">
         <input type="hidden" name="dept_file"    value="<?= htmlspecialchars($deptFile) ?>">
         <input type="hidden" name="harvest_mode" value="whatsapp">
+        <input type="hidden" name="wa_source"    value="<?= htmlspecialchars($waSource) ?>">
         <input type="hidden" name="mode"         value="<?= htmlspecialchars($mode) ?>">
         <button class="btn-approve" <?= $allOk ? '' : 'disabled' ?>>אישור</button>
     </form>

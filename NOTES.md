@@ -1,10 +1,54 @@
 # OCR Subproject Documentation
 
 **Project Location:** `C:\xampp\htdocs\website`
-**Last Updated:** September 26, 2026
+**Last Updated:** November 5, 2026
 **Status:** Phase 1 Complete - Ready for Commercial Layer
 
 ---
+
+## Recent Updates (November 5, 2026)
+
+### `WaFetch/` — web page for the WhatsApp group image download, step 1 of NP's WhatsApp mode
+
+**Why:** the image download from a WhatsApp group was `npm start` in
+`C:\RetailAgents\WhatsAppMessageFetcher`: typing the group name, the start and end times and the
+"messages for me" names in a CMD each time, unclear results, and then copying the images by hand
+from the fetcher's `output\images` to `whatsapp_app\whatsapp_images` for NP.
+
+**What:**
+- **`WaFetch/index.php`** (http://localhost/website/WaFetch/) — saved groups (added by typing the name
+  as it appears in WhatsApp; no WhatsApp search), time window with date/time pickers (default: from
+  the group's last run until now; a new group asks for the start, with quick picks), editable
+  "messages for me" names (default שמרי, שימרי). Live progress (connecting → QR in the page if
+  WhatsApp asks → loading messages → downloading), then: counts, the messages for you, thumbnails of
+  the saved images with their price, the images not saved and why. Opens `output\images` in Explorer
+  with large icons.
+- **`WaFetch/api.php`** (status / add_group / remove_group / fetch / open_folder), **`lib.php`**
+  (settings, background start of `web-run.js` via `start /B`, one run at a time), **`image.php`**
+  (thumbnails from outside the web root), **`config.php`** (paths + "taken by NP" tracking, shared
+  with NP). Settings and run folders: the fetcher's `output\web\` (gitignored there).
+- **Access:** WaFetch starts programs and opens windows on this computer — refused unless the request
+  comes from the computer itself and not through the ngrok tunnel (X-Forwarded-For).
+- **Fetcher side (RetailAgents repo):** `index.js` is also a module (hooks for QR/progress/images,
+  configurable names); `web-run.js` is the page's runner: finds the chat by name (exact name wins,
+  otherwise the only chat containing it; otherwise stops and lists the candidates), loads history
+  back to the start (asking the phone when needed), saves priced images to `output\images` after
+  moving the previous run's to `output\archive\<time>`, writes `output\results.json`.
+
+**NP harmonized:** "אופן איסוף תמונות" now has three options — ידני / **WhatsApp — הורדה מקבוצה**
+(default) / WhatsApp Business (the webhook, unchanged). New `wa_source` field (`group` | `webhook`,
+missing = `webhook`) next to `harvest_mode=whatsapp`; `NPharmonized/wa_source.php` maps it to the
+folder: the fetcher's `output\images` or `whatsapp_app\whatsapp_images`. One source per run (each
+numbers its images from 1). "הורדה מקבוצה" goes through WaFetch first (NP bar with shop/date,
+"המשך ל-NP" after the download, "דלג" when the images are already there), then `confirm.php` /
+`process_whatsapp.php` read the chosen folder. A group is linked to the shop on its first NP run;
+that shop's groups come first. `process_whatsapp.php` records the images NP took
+(`output\web\consumed.json`); a new download warns before archiving images NP never took.
+
+**Verified:** chat lookup and the not-found message through the API; headless click-through of NP →
+WaFetch → "דלג" → confirm.php (source + folder + 6 valid images) and of the webhook option (root
+letter Q, so no NP folder was created). A full real run (download → המשך ל-NP → processing) was done
+by the user on the standalone page; the NP processing step itself is unchanged apart from the folder.
 
 ## Recent Updates (September 26, 2026)
 

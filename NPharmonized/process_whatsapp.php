@@ -1,15 +1,18 @@
 <?php
 // process_whatsapp.php — "WhatsApp" image-harvest counterpart to process.php.
 //
-// Copies the images staged in whatsapp_app/whatsapp_images into the NP
-// directory (ordered by their serial number, not their embedded timestamp) —
-// the originals are left in place for debugging — generates a fresh New
+// Copies the images staged by the chosen WhatsApp source (wa_source.php: the
+// group download's output/images, or the webhook's whatsapp_app/whatsapp_images)
+// into the NP directory (ordered by their serial number, not their embedded
+// timestamp) — the originals are left in place for debugging (a group
+// download's are recorded as taken, see WaFetch) — generates a fresh New
 // Products List (NPL) with the required headers, and writes each image's
 // caption ("y" value) into column F, compacting any gaps caused by missing
 // serial numbers. From here on the flow rejoins the Manual method at
 // stage_br.php.
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/flow_mode.php';
+require_once __DIR__ . '/wa_source.php';
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -25,7 +28,8 @@ $deptFile   = $_POST['dept_file'] ?? '';
 $rootLetter = $_POST['root_letter'] ?? '';
 $mode       = npFlowMode();
 
-$whatsappImagesDir = __DIR__ . '/../whatsapp_app/whatsapp_images';
+$waSource          = npWaSource();
+$whatsappImagesDir = npWaImagesDir($waSource);
 
 // ── Ensure the NP directory exists (defensive re-check) ────────────────────────
 if (!is_dir($npDir) && !@mkdir($npDir, 0777, true)) {
@@ -87,7 +91,7 @@ if (empty($items) || !empty($invalidNames) || !empty($duplicates)) {
 usort($items, fn($a, $b) => $a['serial'] <=> $b['serial']);
 
 // ── Transfer (copy) images into the NP directory ─────────────────────────────────
-// Originals are kept in whatsapp_app/whatsapp_images for debugging — not moved.
+// Originals are kept in the source folder for debugging — not moved.
 $log      = []; // ['type'=>'ok'|'skip'|'err','msg'=>'...']
 $copied   = 0;
 $skipped  = 0;
@@ -112,6 +116,13 @@ foreach ($items as &$item) {
     }
 }
 unset($item);
+
+// A group download's images are now in NP: WaFetch's next download may
+// archive them without warning (WaFetch/config.php).
+if ($waSource === 'group') {
+    $inNp = array_map(fn($i) => $i['fname'], array_filter($items, fn($i) => strpos($i['fullPath'], $npDir) === 0));
+    waf_mark_consumed(array_values($inNp), "NP {$shop} {$date}");
+}
 
 // ── Generate the NPL workbook with the required headers ─────────────────────────
 $spreadsheet = new Spreadsheet();

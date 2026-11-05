@@ -50,14 +50,21 @@ $today = date('Y-m-d');
         <label>אופן איסוף תמונות</label>
         <div class="switch-group">
             <div class="switch-opt">
-                <input type="radio" id="harvest_manual" name="harvest_mode" value="manual">
+                <input type="radio" id="harvest_manual" name="harvest_choice" value="manual">
                 <label for="harvest_manual">ידני</label>
             </div>
             <div class="switch-opt">
-                <input type="radio" id="harvest_whatsapp" name="harvest_mode" value="whatsapp" checked>
-                <label for="harvest_whatsapp">WhatsApp</label>
+                <input type="radio" id="harvest_wa_group" name="harvest_choice" value="group" checked>
+                <label for="harvest_wa_group">WhatsApp — הורדה מקבוצה</label>
+            </div>
+            <div class="switch-opt">
+                <input type="radio" id="harvest_wa_webhook" name="harvest_choice" value="webhook">
+                <label for="harvest_wa_webhook">WhatsApp Business</label>
             </div>
         </div>
+        <input type="hidden" name="harvest_mode" id="harvest_mode" value="whatsapp">
+        <input type="hidden" name="wa_source" id="wa_source" value="group">
+        <input type="hidden" name="np_flow" value="1">
 
         <label>מצב תהליך</label>
         <div class="switch-group">
@@ -74,5 +81,17 @@ $today = date('Y-m-d');
         <button type="submit">המשך לאישור</button>
     </form>
 </div>
+<script>
+// "WhatsApp — download from a group" goes through WaFetch first (step 1:
+// download the images), which then continues to confirm.php; the other two
+// go straight to confirm.php. harvest_mode stays "whatsapp" for both
+// WhatsApp choices; wa_source says where the images come from.
+document.querySelector('form').addEventListener('submit', function () {
+    var choice = document.querySelector('input[name="harvest_choice"]:checked').value;
+    document.getElementById('harvest_mode').value = choice === 'manual' ? 'manual' : 'whatsapp';
+    document.getElementById('wa_source').value = choice === 'manual' ? '' : choice;
+    this.action = choice === 'group' ? '../WaFetch/index.php' : 'confirm.php';
+});
+</script>
 </body>
 </html>

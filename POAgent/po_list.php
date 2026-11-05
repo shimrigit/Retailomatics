@@ -26,21 +26,35 @@ $showUserColumn = !$isMobile;
 // are flagged; ?pending=1 shows only those — the queue the user sends one by
 // one from priority_create.php (no "send all" for now).
 // Delivery notes of those POs not (fully) received in Priority are flagged the
-// same way (priority_receive.php, one by one).
-$receiptsToHandle = fn(array $po) => count(array_filter(DNStore::listForPo($po['core_name'] ?? ''),
-    fn($dn) => in_array(poagent_priority_receipt_state($po, $dn), ['pending', 'partial', 'missing'], true)));
-$pendingCount = $partialCount = $missingCount = $receiptCount = 0;
+// same way (priority_receive.php, one by one): ['pending' => not sent yet,
+// 'check' => a receipt that stopped half-way or left items out — until it is
+// marked "הושלמה ידנית"].
+$receiptsToHandle = function (array $po): array {
+    $counts = ['pending' => 0, 'check' => 0];
+    foreach (DNStore::listForPo($po['core_name'] ?? '') as $dn) {
+        $state = poagent_priority_receipt_state($po, $dn);
+        if ($state === 'pending') {
+            $counts['pending']++;
+        } elseif ($state === 'partial' || $state === 'missing') {
+            $counts['check']++;
+        }
+    }
+    return $counts;
+};
+$pendingCount = $partialCount = $missingCount = $receiptCount = $receiptCheckCount = 0;
 foreach ($records as $po) {
     $state = poagent_priority_state($po);
     $pendingCount += $state === 'pending';
     $partialCount += $state === 'partial';
     $missingCount += $state === 'missing';
-    $receiptCount += $receiptsToHandle($po);
+    $receipts = $receiptsToHandle($po);
+    $receiptCount += $receipts['pending'];
+    $receiptCheckCount += $receipts['check'];
 }
 $onlyPending = !empty($_GET['pending']);
 if ($onlyPending) {
     $records = array_values(array_filter($records,
-        fn($po) => in_array(poagent_priority_state($po), ['pending', 'partial', 'missing'], true) || $receiptsToHandle($po) > 0));
+        fn($po) => in_array(poagent_priority_state($po), ['pending', 'partial', 'missing'], true) || array_sum($receiptsToHandle($po)) > 0));
 }
 $listUrl = fn(bool $pending) => 'po_list.php?' . http_build_query(array_filter(
     ['mine' => $showAll ? null : 1, 'pending' => $pending ? 1 : null]));
@@ -50,11 +64,12 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
 <h2>הזמנות רכש<?= $showAll ? ' (כל המשתמשים)' : ' — ' . htmlspecialchars($generatorId) ?></h2>
 
 <p>
-    <?php if ($pendingCount + $partialCount + $missingCount + $receiptCount > 0): ?>
+    <?php if ($pendingCount + $partialCount + $missingCount + $receiptCount + $receiptCheckCount > 0): ?>
         <strong style="color:#856404">⚠️ <?= $pendingCount ?> הזמנות ממתינות לשליחה לפריוריטי<?=
             $partialCount ? " · {$partialCount} נפתחו חלקית — לבדוק" : '' ?><?=
             $missingCount ? " · {$missingCount} נפתחו עם חוסרים — לטפל" : '' ?><?=
-            $receiptCount ? " · {$receiptCount} תעודות משלוח ממתינות לקבלה בפריוריטי" : '' ?></strong>
+            $receiptCount ? " · {$receiptCount} תעודות משלוח ממתינות לקבלה בפריוריטי" : '' ?><?=
+            $receiptCheckCount ? " · {$receiptCheckCount} קבלות נעצרו באמצע — לבדוק" : '' ?></strong>
     <?php else: ?>
         <span class="muted">✅ כל ההזמנות (מ-<?= date('d/m/Y', strtotime(POAGENT_PRIORITY_CUTOFF)) ?>) נמצאות בפריוריטי.</span>
     <?php endif; ?>
@@ -115,9 +130,14 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
                 <a href="<?= htmlspecialchars($priorityHref) ?>" style="text-decoration:none">
                     <span class="badge <?= $priorityBadge[0] ?>"><?= htmlspecialchars($priorityBadge[1]) ?></span></a>
             <?php endif; ?>
-            <?php if ($toReceive = $receiptsToHandle($po)): ?>
+            <?php $receipts = $receiptsToHandle($po); ?>
+            <?php if ($receipts['pending']): ?>
                 <br><a href="po_view.php?core_name=<?= urlencode($coreName) ?>" style="text-decoration:none">
-                    <span class="badge open">📥 <?= $toReceive ?> לקבלה</span></a>
+                    <span class="badge open">📥 <?= $receipts['pending'] ?> לקבלה</span></a>
+            <?php endif; ?>
+            <?php if ($receipts['check']): ?>
+                <br><a href="po_view.php?core_name=<?= urlencode($coreName) ?>" style="text-decoration:none">
+                    <span class="badge cancelled">⚠️ <?= $receipts['check'] ?> קבלות לבדיקה</span></a>
             <?php endif; ?>
         </td>
         <td data-label="פריטים"><?= count($po['items'] ?? []) ?></td>

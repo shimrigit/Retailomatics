@@ -46,6 +46,7 @@ $pending = DNStore::findPendingImage($coreName);
 poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
 ?>
 <h2>הזמנת רכש — <?= htmlspecialchars($po['unique_id'] ?? '') ?></h2>
+<?php poagent_render_nav(['חזרה להיסטוריה' => 'po_list.php', 'חזרה לתפריט' => 'main_menu.php']); ?>
 
 <div class="poagent-sticky-layout">
 

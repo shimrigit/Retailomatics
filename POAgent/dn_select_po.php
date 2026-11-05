@@ -30,6 +30,7 @@ $eligible = array_values(array_filter(
 poagent_render_head('POAgent – בחירת הזמנה לתעודת משלוח', 900);
 ?>
 <h2>בחר הזמנת רכש לתעודת המשלוח</h2>
+<?php poagent_render_nav(['חזרה לתפריט' => 'main_menu.php']); ?>
 <p class="muted">מוצגות הזמנות של כל המשתמשים.</p>
 
 <?php if (empty($eligible)): ?>

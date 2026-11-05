@@ -75,6 +75,7 @@ $actionText = [
 poagent_render_head('POAgent – קבלת סחורה בפריוריטי ' . $po['unique_id'], 1000);
 ?>
 <h2>קבלת סחורה מספק בפריוריטי — <?= htmlspecialchars($po['unique_id']) ?></h2>
+<?php poagent_render_nav(['הצג הזמנה' => 'po_view.php?core_name=' . urlencode($po['core_name']), 'חזרה להיסטוריה' => 'po_list.php']); ?>
 <p class="muted">שלב בדיקות: הקבלה נוצרת בפריוריטי כ<b>טיוטא</b> בלבד. אחרי בדיקה — משנים בפריוריטי ל<b>סופית</b> (זה מעדכן מלאי).</p>
 
 <?php if ($markedManually): ?>

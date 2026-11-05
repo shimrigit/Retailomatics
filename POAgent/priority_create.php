@@ -55,6 +55,7 @@ $errorHelp = poagent_priority_error_help() + [
 poagent_render_head('POAgent – פריוריטי ' . $po['unique_id'], 1000);
 ?>
 <h2>צור הזמנת רכש בפריוריטי — <?= htmlspecialchars($po['unique_id']) ?></h2>
+<?php poagent_render_nav(['הצג הזמנה' => 'po_view.php?core_name=' . urlencode($coreName), 'חזרה להיסטוריה' => 'po_list.php']); ?>
 <p class="muted">שלב בדיקות: ההזמנה נפתחת בפריוריטי כ<b>טיוטא</b> בלבד, ורק בלחיצה על הכפתור.</p>
 
 <?php if ($markedManually): ?>

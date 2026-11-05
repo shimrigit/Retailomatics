@@ -35,6 +35,7 @@ $imageUrl = 'DNdir/' . rawurlencode($dn['image_filename'] ?? '');
 poagent_render_head('POAgent – תוצאת עיבוד תעודת המשלוח', 1700);
 ?>
 <h2>תוצאת עיבוד תעודת המשלוח</h2>
+<?php poagent_render_nav(['🔍 צפייה בהזמנה' => 'po_view.php?core_name=' . urlencode($po['core_name'] ?? ''), 'חזרה לתפריט' => 'main_menu.php']); ?>
 
 <div class="poagent-sticky-layout">
 

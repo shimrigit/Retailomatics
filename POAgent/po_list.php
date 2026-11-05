@@ -63,6 +63,16 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
 ?>
 <h2>הזמנות רכש<?= $showAll ? ' (כל המשתמשים)' : ' — ' . htmlspecialchars($generatorId) ?></h2>
 
+<?php
+$mineToggle = 'po_list.php?' . http_build_query(array_filter(['mine' => $showAll ? 1 : null, 'pending' => $onlyPending ? 1 : null]));
+ob_start(); ?>
+    <label style="display:inline-flex;align-items:center;gap:6px;margin:0;cursor:pointer;font-size:16px">
+        <input type="checkbox" <?= $onlyPending ? 'checked' : '' ?>
+               onchange="location.href=this.checked ? <?= htmlspecialchars(json_encode($listUrl(true))) ?> : <?= htmlspecialchars(json_encode($listUrl(false))) ?>">
+        הצג רק ממתינות
+    </label>
+<?php poagent_render_nav(['חזרה לתפריט' => 'main_menu.php', ($showAll ? 'הצג רק שלי' : 'הצג את כולם') => $mineToggle], ob_get_clean()); ?>
+
 <p>
     <?php if ($pendingCount + $partialCount + $missingCount + $receiptCount + $receiptCheckCount > 0): ?>
         <strong style="color:#856404">⚠️ <?= $pendingCount ?> הזמנות ממתינות לשליחה לפריוריטי<?=
@@ -73,12 +83,6 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
     <?php else: ?>
         <span class="muted">✅ כל ההזמנות (מ-<?= date('d/m/Y', strtotime(POAGENT_PRIORITY_CUTOFF)) ?>) נמצאות בפריוריטי.</span>
     <?php endif; ?>
-    &nbsp;
-    <label style="cursor:pointer">
-        <input type="checkbox" <?= $onlyPending ? 'checked' : '' ?>
-               onchange="location.href=this.checked ? <?= htmlspecialchars(json_encode($listUrl(true))) ?> : <?= htmlspecialchars(json_encode($listUrl(false))) ?>">
-        הצג רק ממתינות
-    </label>
 </p>
 
 <?php if (empty($records)): ?>
@@ -160,7 +164,7 @@ poagent_render_head('POAgent – היסטוריית הזמנות', 1050);
 </table>
 <?php endif; ?>
 
-<a class="btn secondary" href="po_list.php?<?= http_build_query(array_filter(['mine' => $showAll ? 1 : null, 'pending' => $onlyPending ? 1 : null])) ?>"><?= $showAll ? 'הצג רק שלי' : 'הצג את כולם' ?></a>
+<a class="btn secondary" href="<?= htmlspecialchars($mineToggle) ?>"><?= $showAll ? 'הצג רק שלי' : 'הצג את כולם' ?></a>
 <div class="row-gap"></div>
 <a class="btn secondary" href="main_menu.php">חזרה לתפריט</a>
 <?php poagent_render_foot(); ?>

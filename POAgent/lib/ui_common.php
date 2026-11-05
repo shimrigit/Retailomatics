@@ -34,6 +34,10 @@ function poagent_render_head(string $title, int $cardWidth = 690): void
         .btn.secondary:hover { background: #666; }
         .btn.disabled { background: #ddd; cursor: not-allowed; color: #888; }
         .btn.disabled:hover { background: #ddd; }
+        /* Compact navigation row at the top of list / long pages
+           (poagent_render_nav()) — so the user needn't scroll to the bottom. */
+        .poagent-nav { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: -12px 0 22px; }
+        .poagent-nav .btn { display: inline-block; width: auto; margin: 0; padding: 9px 18px; font-size: 16px; }
         .switch-group { display: flex; gap: 15px; margin-bottom: 26px; }
         .switch-opt { flex: 1; }
         .switch-opt input[type="radio"] { display: none; }
@@ -151,6 +155,7 @@ function poagent_render_head(string $title, int $cardWidth = 690): void
             label { font-size: 16px; }
             select, input[type="text"], input[type="number"] { font-size: 16px; padding: 11px; margin-bottom: 16px; }
             button, .btn { font-size: 18px; padding: 15px; }
+            .poagent-nav .btn { font-size: 15px; padding: 9px 14px; }
             .switch-opt label { font-size: 15px; padding: 11px; }
 
             /* Any table wearing this class becomes a stack of cards, one per
@@ -180,6 +185,23 @@ function poagent_render_head(string $title, int $cardWidth = 690): void
 </head>
 <body>
 <div class="card">
+    <?php
+}
+
+/**
+ * Compact navigation row under a list / long page's heading: [label => href].
+ * The same buttons stay at the bottom too — a long list shouldn't need a
+ * scroll down just to leave the page. $extraHtml: more controls on the row.
+ */
+function poagent_render_nav(array $links, string $extraHtml = ''): void
+{
+    ?>
+    <nav class="poagent-nav">
+        <?php foreach ($links as $label => $href): ?>
+            <a class="btn secondary" href="<?= htmlspecialchars($href) ?>"><?= htmlspecialchars($label) ?></a>
+        <?php endforeach; ?>
+        <?= $extraHtml ?>
+    </nav>
     <?php
 }
 

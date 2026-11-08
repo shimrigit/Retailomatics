@@ -190,7 +190,7 @@ $statusClass = ['ok' => 'st-ok', 'above' => 'st-bad', 'below' => 'st-bad', 'na' 
         <col class="col-deptnum">
         <col style="width:140px">
     </colgroup>
-    <tr><th>#</th><th>ברקוד</th><th>ביקורת ספרה</th><th>שם מוצר</th><th>מחיר מכירה</th><th>מחיר מול CHP</th><th>מספר מחלקה</th><th>שם מחלקה</th></tr>
+    <tr><th>#</th><th>ברקוד</th><th>ביקורת ספרה</th><th>שם מוצר</th><th>מחיר מכירה</th><th>מחיר מול CPD</th><th>מספר מחלקה</th><th>שם מחלקה</th></tr>
     <?php foreach ($finalRows as $i => $r): ?>
     <tr>
         <td><?= $i + 1 ?></td>
@@ -206,12 +206,12 @@ $statusClass = ['ok' => 'st-ok', 'above' => 'st-bad', 'below' => 'st-bad', 'na' 
 </table>
 
 <!-- ── Price range summary ───────────────────────────────────────────────────── -->
-<h3 style="color:#555;font-size:27px;margin-bottom:18px">סיכום מחירים מול CHP</h3>
+<h3 style="color:#555;font-size:27px;margin-bottom:18px">סיכום מחירים מול CPD</h3>
 <div class="price-stats">
     <span>סה״כ שורות: <?= count($finalRows) ?></span>
     <span>הושוו: <?= $pcCompared ?></span>
     <?php if ($pcNa > 0): ?>
-    <span>ללא מחירי CHP (NA): <?= $pcNa ?></span>
+    <span>ללא מחירי CPD (NA): <?= $pcNa ?></span>
     <?php endif; ?>
 </div>
 
@@ -221,14 +221,14 @@ $statusClass = ['ok' => 'st-ok', 'above' => 'st-bad', 'below' => 'st-bad', 'na' 
     $warnLines = [];
     foreach ($pcWarn as $w) {
         if (!empty($w['isBelow']))
-            $warnLines[] = "{$w['name']} ({$w['barcode']}) — מחיר מכירה " . number_format($w['sale'],2) . " נמוך ממינימום " . number_format($w['min'],2) . " ב CHP";
+            $warnLines[] = "{$w['name']} ({$w['barcode']}) — מחיר מכירה " . number_format($w['sale'],2) . " נמוך ממינימום " . number_format($w['min'],2) . " ב CPD";
         else
-            $warnLines[] = "{$w['name']} ({$w['barcode']}) — מחיר מכירה " . number_format($w['sale'],2) . " גבוה ממקסימום " . number_format($w['max'],2) . " ב CHP";
+            $warnLines[] = "{$w['name']} ({$w['barcode']}) — מחיר מכירה " . number_format($w['sale'],2) . " גבוה ממקסימום " . number_format($w['max'],2) . " ב CPD";
     }
-    $copyText = "שים לב ל " . count($pcWarn) . " מוצרים עם מחירים מחוץ לטווח CHP\n" . implode("\n", $warnLines);
+    $copyText = "שים לב ל " . count($pcWarn) . " מוצרים עם מחירים מחוץ לטווח CPD\n" . implode("\n", $warnLines);
 ?>
 <div class="warn-box">
-    <h4>⚠ שים לב ל <?= count($pcWarn) ?> מוצרים עם מחירים מחוץ לטווח CHP</h4>
+    <h4>⚠ שים לב ל <?= count($pcWarn) ?> מוצרים עם מחירים מחוץ לטווח CPD</h4>
     <?php foreach ($warnLines as $line): ?>
     <div class="warn-row"><?= htmlspecialchars($line) ?></div>
     <?php endforeach; ?>

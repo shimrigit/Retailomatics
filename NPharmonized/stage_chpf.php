@@ -1,5 +1,5 @@
 <?php
-// Stage 2 – CHP Fetch
+// Stage 2 – chain prices (CPD; was CHP Fetch — the file names keep "_CHPF")
 set_time_limit(0);
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/xlsx_retry.php';
@@ -37,6 +37,26 @@ for ($row = 2; $row <= $highRow; $row++) {
         'barcode'   => trim((string)$val),
         'salePrice' => (float)$sheet->getCell('F' . $row)->getValue(),
     ];
+}
+
+// ── Price source ──────────────────────────────────────────────────────────────
+// 'cpd' = the chains' official price files (CPD, commercialLayer/cpd_client.php);
+// 'chp' = the old chp.co.il scraper (blocked for headless requests since Nov 2026).
+// Both return the same shape, so parseCHP() and the later stages don't change.
+const NP_PRICE_SOURCE = 'cpd';
+// With CPD the product name is the AI name (cpd_namer.php, CHP style
+// "product, size, brand"), named once per barcode and kept; without it, the
+// longest chain name + size.
+require_once __DIR__ . '/../commercialLayer/cpd_namer.php';
+$cpd     = new CPDClient();
+$aiNames = [];
+function fetchPrices($barcode, $city) {
+    global $cpd, $aiNames;
+    if (NP_PRICE_SOURCE === 'cpd') {
+        $data = $cpd->searchPrices($barcode, $city, $aiNames[$barcode] ?? null);
+        return $data === false ? null : $data;
+    }
+    return callCHP($barcode, $city);
 }
 
 // ── CHP scraper call ──────────────────────────────────────────────────────────
@@ -97,7 +117,7 @@ function sf() { echo str_pad('', 512, ' '); flush(); }
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>NP Harmonized – שלב 2: CHP Fetch</title>
+    <title>NP Harmonized – שלב 2: מחירי רשתות (CPD)</title>
     <style>
         body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 45px; }
         h2   { color: #2575a8; font-size: 36px; margin-bottom: 9px; }
@@ -127,8 +147,16 @@ function sf() { echo str_pad('', 512, ' '); flush(); }
     </style>
 </head>
 <body>
-<h2>NP Harmonized – שלב 2: CHP Fetch</h2>
+<h2>NP Harmonized – שלב 2: <?= NP_PRICE_SOURCE === 'cpd' ? 'מחירי רשתות (CPD)' : 'CHP Fetch' ?></h2>
 <p class="sub">חנות: <?= htmlspecialchars($shop) ?> | תאריך: <?= htmlspecialchars($date) ?> | <?= count($barcodes) ?> ברקודים</p>
+<?php if (NP_PRICE_SOURCE === 'cpd'): ?>
+    <?php if (!$cpd->available()): ?>
+<div class="warn-box"><h4>⚠ <?= htmlspecialchars($cpd->error) ?></h4><div class="warn-row">כל הברקודים יסומנו NA.</div></div>
+    <?php elseif ($cpd->isStale()): ?>
+<div class="warn-box"><h4>⚠ מחירי CPD לא מהיום — עודכנו לאחרונה <?= htmlspecialchars(date('d/m/Y', strtotime($cpd->lastUpdated()))) ?></h4>
+<div class="warn-row">כדי לעדכן: node update.js ב-C:\RetailAgents\PriceTransparency (כ-10 דקות). אפשר להמשיך עם המחירים הקיימים.</div></div>
+    <?php endif; ?>
+<?php endif; ?>
 
 <?php if (empty($barcodes)): ?>
 <p style="color:#c0392b;font-size:22px;">לא נמצאו ברקודים בעמודה A. ודא שהשלב הקודם הושלם.</p>
@@ -141,18 +169,32 @@ sf();
 $results = [];
 $city    = 'תל אביב';
 
+if (NP_PRICE_SOURCE === 'cpd' && $cpd->available()) {
+    echo '<p class="pl" id="pnames">יוצר שמות מוצרים (AI) לברקודים חדשים...</p>';
+    sf();
+    $namer   = new CPDNamer($cpd);
+    $aiNames = $namer->names(array_column($barcodes, 'barcode'));
+    $u       = $namer->usage;
+    $msg     = $namer->error
+        ? '⚠ ' . $namer->error . ' — לברקודים בלי שם AI נלקח שם הרשת + גודל'
+        : '✔ שמות מוצרים: ' . count($aiNames) . ' ברקודים' . ($u['calls'] ? " ({$u['calls']} קריאות AI, " . ($u['prompt_tokens'] + $u['completion_tokens']) . ' טוקנים)' : ' (כולם כבר היו שמורים)');
+    echo '<script>var el = document.getElementById("pnames"); el.className = "pl ' . ($namer->error ? 'err' : 'done') . '"; el.textContent = '
+        . json_encode($msg, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) . ';</script>';
+    sf();
+}
+
 foreach ($barcodes as $idx => $item) {
     $z = $idx + 1;
     echo '<p class="pl" id="p' . $z . '">מעבד ברקוד ' . $z . ' מתוך ' . count($barcodes) . ': ' . htmlspecialchars($item['barcode']) . '...</p>';
     sf();
 
-    $chpData = callCHP($item['barcode'], $city);
+    $chpData = fetchPrices($item['barcode'], $city);
     $parsed  = parseCHP($chpData);
 
     echo '<script>
         var el = document.getElementById("p' . $z . '");
         el.className = "pl done";
-        el.textContent = "✔ ברקוד ' . $z . ': ' . htmlspecialchars($item['barcode']) . ' ← ' . htmlspecialchars($parsed['hebrewName']) . ' | מקס: ' . $parsed['maxPrice'] . ' | מין: ' . $parsed['minPrice'] . '";
+        el.textContent = ' . json_encode('✔ ברקוד ' . $z . ': ' . $item['barcode'] . ' ← ' . $parsed['hebrewName'] . ' | מקס: ' . $parsed['maxPrice'] . ' | מין: ' . $parsed['minPrice'], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) . ';
     </script>';
     sf();
 
@@ -223,9 +265,9 @@ function priceStatus($r) {
 }
 ?>
 
-<h3>תוצאות CHP Fetch</h3>
+<h3>תוצאות מחירי רשתות (CPD)</h3>
 <table>
-    <tr><th>#</th><th>ברקוד קלט</th><th>שם מוצר</th><th>ברקוד CHP</th><th>מחיר מקסימלי</th><th>מחיר מינימלי</th><th>מחיר מכירה</th><th>סטטוס</th></tr>
+    <tr><th>#</th><th>ברקוד קלט</th><th>שם מוצר</th><th>ברקוד CPD</th><th>מחיר מקסימלי</th><th>מחיר מינימלי</th><th>מחיר מכירה</th><th>סטטוס</th></tr>
     <?php foreach ($results as $idx => $r):
         [$cls, $label] = priceStatus($r);
         $tdCls = $cls === 'above' ? 'price-above' : ($cls === 'below' ? 'price-below' : ($cls === 'na' ? 'price-na' : 'price-ok'));
@@ -248,7 +290,7 @@ function priceStatus($r) {
     <span>סה״כ שורות: <?= count($results) ?></span>
     <span>הושוו: <?= $compared ?></span>
     <?php if ($naCount > 0): ?>
-    <span>ללא מחירי CHP (NA): <?= $naCount ?></span>
+    <span>ללא מחירי CPD (NA): <?= $naCount ?></span>
     <?php endif; ?>
 </div>
 
@@ -256,13 +298,13 @@ function priceStatus($r) {
 <div class="ok-box">✅ כל המחירים בטווח</div>
 <?php elseif (!empty($outOfRange)): ?>
 <div class="warn-box">
-    <h4>⚠ שים לב ל <?= count($outOfRange) ?> מוצרים עם מחירים מחוץ לטווח CHP</h4>
+    <h4>⚠ שים לב ל <?= count($outOfRange) ?> מוצרים עם מחירים מחוץ לטווח CPD</h4>
     <?php foreach ($outOfRange as $w):
         $r = $w['r'];
         if ($w['issue'] === 'above_max')
-            $msg = "{$r['hebrewName']} ({$r['inputBarcode']}) — מחיר מכירה " . number_format($r['salePrice'],2) . " גבוה ממקסימום " . number_format($w['max'],2) . " ב CHP";
+            $msg = "{$r['hebrewName']} ({$r['inputBarcode']}) — מחיר מכירה " . number_format($r['salePrice'],2) . " גבוה ממקסימום " . number_format($w['max'],2) . " ב CPD";
         else
-            $msg = "{$r['hebrewName']} ({$r['inputBarcode']}) — מחיר מכירה " . number_format($r['salePrice'],2) . " נמוך ממינימום " . number_format($w['min'],2) . " ב CHP";
+            $msg = "{$r['hebrewName']} ({$r['inputBarcode']}) — מחיר מכירה " . number_format($r['salePrice'],2) . " נמוך ממינימום " . number_format($w['min'],2) . " ב CPD";
     ?>
     <div class="warn-row"><?= htmlspecialchars($msg) ?></div>
     <?php endforeach; ?>

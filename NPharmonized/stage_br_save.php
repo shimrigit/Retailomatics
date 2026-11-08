@@ -113,7 +113,7 @@ unset($_SESSION['br_results'], $_SESSION['br_npdir'], $_SESSION['br_xlsx'],
     <input type="hidden" name="date"      value="<?= htmlspecialchars($date) ?>">
     <input type="hidden" name="dept_file" value="<?= htmlspecialchars($deptFile) ?>">
     <input type="hidden" name="mode"      value="<?= htmlspecialchars($mode) ?>">
-    <button type="submit" class="btn-next">המשך לשלב 2 – CHP Fetch ←</button>
+    <button type="submit" class="btn-next">המשך לשלב 2 – מחירי רשתות (CPD) ←</button>
 </form>
 <?php renderFlowAutoAdvance($mode, 'advanceForm'); ?>
 </body>

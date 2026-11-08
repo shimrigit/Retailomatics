@@ -289,7 +289,7 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
             <th>ביקורת ספרה</th>
             <th>שם מוצר</th>
             <th>מחיר מכירה</th>
-            <th>מחיר מול CHP</th>
+            <th>מחיר מול CPD</th>
             <th>מספר מחלקה</th>
             <th>שם מחלקה</th>
             <th>הערת AI</th>
@@ -321,12 +321,12 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
 </form>
 
 <!-- ── Price range summary ───────────────────────────────────────────────────── -->
-<h3 style="color:#555;font-size:27px;margin-bottom:18px">סיכום מחירים מול CHP</h3>
+<h3 style="color:#555;font-size:27px;margin-bottom:18px">סיכום מחירים מול CPD</h3>
 <div class="price-stats">
     <span>סה״כ שורות: <?= count($priceChecks) ?></span>
     <span>הושוו: <?= $pcCompared ?></span>
     <?php if ($pcNa > 0): ?>
-    <span>ללא מחירי CHP (NA): <?= $pcNa ?></span>
+    <span>ללא מחירי CPD (NA): <?= $pcNa ?></span>
     <?php endif; ?>
 </div>
 
@@ -338,13 +338,13 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
         $rowName = null;
         foreach ($finalRows as $fr) { if ($fr['row'] === $row) { $rowName = $fr['name']; break; } }
         if ($w['status'] === 'above')
-            $warnLines[] = "{$rowName} ({$w['barcode']}) — מחיר מכירה " . number_format($w['sale'],2) . " גבוה ממקסימום " . number_format($w['max'],2) . " ב CHP";
+            $warnLines[] = "{$rowName} ({$w['barcode']}) — מחיר מכירה " . number_format($w['sale'],2) . " גבוה ממקסימום " . number_format($w['max'],2) . " ב CPD";
         else
-            $warnLines[] = "{$rowName} ({$w['barcode']}) — מחיר מכירה " . number_format($w['sale'],2) . " נמוך ממינימום " . number_format($w['min'],2) . " ב CHP";
+            $warnLines[] = "{$rowName} ({$w['barcode']}) — מחיר מכירה " . number_format($w['sale'],2) . " נמוך ממינימום " . number_format($w['min'],2) . " ב CPD";
     }
 ?>
 <div class="warn-box">
-    <h4>⚠ שים לב ל <?= count($pcWarn) ?> מוצרים עם מחירים מחוץ לטווח CHP</h4>
+    <h4>⚠ שים לב ל <?= count($pcWarn) ?> מוצרים עם מחירים מחוץ לטווח CPD</h4>
     <?php foreach ($warnLines as $line): ?>
     <div class="warn-row"><?= htmlspecialchars($line) ?></div>
     <?php endforeach; ?>
@@ -368,15 +368,15 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
     function ftpReasons(array $r): array {
         $reasons = [];
         if (!$r['checksumOk'])       $reasons[] = 'ביקורת ספרה נכשלה';
-        if ($r['status'] === 'na')   $reasons[] = 'לא נמצאו נתוני CHP';
-        if ($r['status'] === 'above') $reasons[] = 'מחיר גבוה ממקסימום CHP';
-        if ($r['status'] === 'below') $reasons[] = 'מחיר נמוך ממינימום CHP';
+        if ($r['status'] === 'na')   $reasons[] = 'לא נמצאו נתוני CPD';
+        if ($r['status'] === 'above') $reasons[] = 'מחיר גבוה ממקסימום CPD';
+        if ($r['status'] === 'below') $reasons[] = 'מחיר נמוך ממינימום CPD';
         return $reasons;
     }
 ?>
 <!-- ── FTP (Failed To Pass) — re-inspect the source photo ─────────────────────── -->
 <h3 style="color:#c0392b;font-size:27px;margin:36px 0 9px">⚠ ברקודים שלא עברו את הבדיקה הסופית (<?= count($ftpRows) ?>)</h3>
-<p class="sub" style="margin-bottom:18px">ביקורת ספרה נכשלה, ו/או לא נמצאו נתוני CHP, ו/או המחיר מחוץ לטווח CHP. ניתן לקרוא שוב את הברקוד מהתמונה ולתקן בטבלה למעלה.</p>
+<p class="sub" style="margin-bottom:18px">ביקורת ספרה נכשלה, ו/או לא נמצאו נתוני CPD, ו/או המחיר מחוץ לטווח CPD. ניתן לקרוא שוב את הברקוד מהתמונה ולתקן בטבלה למעלה.</p>
 <table class="ftp-table">
     <tr>
         <th>#</th>

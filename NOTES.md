@@ -1,10 +1,24 @@
 # OCR Subproject Documentation
 
 **Project Location:** `C:\xampp\htdocs\website`
-**Last Updated:** November 5, 2026
+**Last Updated:** November 8, 2026
 **Status:** Phase 1 Complete - Ready for Commercial Layer
 
 ---
+
+## Recent Updates (November 8, 2026)
+
+### NP stage 2 reads prices from CPD instead of chp.co.il
+
+chp.co.il stopped answering headless requests (ERR_EMPTY_RESPONSE), so `chp_scraper.js` returned nothing and every barcode came out NA. NP's stage 2 (`NPharmonized/stage_chpf.php`) now reads **CPD — Chain Price Database**: the chains' official price-transparency files, downloaded by `C:\RetailAgents\PriceTransparency\update.js` (11 chains, the Tel Aviv stores, ~10 min) into `data\cpd.sqlite`. Manual check page: `Prices/index.php` (http://localhost/website/Prices/).
+
+- **Same contract as CHP.** `commercialLayer/cpd_client.php` (`CPDClient`) has the same `searchPrices($barcode, $city)` as `CHPHeadlessClient` and returns the scraper's shape (`productInfo` "name (יצרן/מותג: X, ברקוד: N)", `productName`, `prices[{store,address,price}]`), so `parseCHP()` and stages 3/4 are unchanged: B = name, C = CPD's barcode, D/E = max/min, `"NA"` when not found. `$city` is ignored (CPD = Tel Aviv only). A barcode with its leading zeros dropped by the chains is still found.
+- **Switch back:** `const NP_PRICE_SOURCE = 'cpd'` at the top of `stage_chpf.php`; `'chp'` restores the old scraper call (left in place).
+- **Product name (column B) by AI**, CHP style "product, size, brand": `commercialLayer/cpd_namer.php` (`CPDNamer`) sends all the chains' names for a barcode (chains cut names at ~20 chars; their "manufacturer" field is mostly the legal supplier/importer, not the brand) to OpenAI (`gpt-4.1`, key from `AIocr/config.json`), 25 barcodes a call. Each barcode is named **once** and kept, as its parts (product, size, brand), in `C:\RetailAgents\PriceTransparency\data\cpd_names.sqlite` — the base for other naming styles per customer later. On an AI failure the stage shows a warning and uses the longest chain name + size. October 2026 (Bernard, 167 products found): ~$0.10, ~35 s for all; later runs read the cache.
+- **Stale data warning** in stage 2 when CPD wasn't updated today (the run continues).
+- **File names and columns unchanged** (`_BR_CHPF.xlsx`, `_DCL.xlsx`); only the on-screen labels say CPD instead of CHP (stages 2–4 and the stage-1 button).
+- **Coverage check** (Bernard, October 2026, 187 barcodes): 167 found (89%); the misses are imports/niche/pet food no Tel Aviv chain sells. CHP had a few of those (its own catalog), CPD has some CHP lacked.
+- **Not switched yet:** the CHP panels in `commercialLayer/verify_new_products.php` / `verify_price_changes.php` (invoice scanning) and the standalone `CHPfetch/` and `commercialLayer/chp_search.php` — next step, same one-line swap to `CPDClient`.
 
 ## Recent Updates (November 5, 2026)
 

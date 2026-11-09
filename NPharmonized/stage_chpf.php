@@ -7,6 +7,7 @@ require_once __DIR__ . '/flow_mode.php';
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['np_dir'])) {
     header('Location: index.php'); exit;
@@ -103,6 +104,8 @@ function parseCHP($data) {
         $out['maxPrice'] = number_format(max($prices), 2);
         $out['minPrice'] = number_format(min($prices), 2);
     }
+    // CPD: not sold in Tel Aviv — the min / max are the national range
+    $out['national'] = !empty($data['national']);
     return $out;
 }
 
@@ -202,7 +205,7 @@ foreach ($barcodes as $idx => $item) {
     echo '<script>
         var el = document.getElementById("p' . $z . '");
         el.className = "pl done";
-        el.textContent = ' . json_encode('✔ ברקוד ' . $z . ': ' . $item['barcode'] . ' ← ' . $parsed['hebrewName'] . ' | מקס: ' . $parsed['maxPrice'] . ' | מין: ' . $parsed['minPrice'], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) . ';
+        el.textContent = ' . json_encode('✔ ברקוד ' . $z . ': ' . $item['barcode'] . ' ← ' . $parsed['hebrewName'] . ' | מקס: ' . $parsed['maxPrice'] . ' | מין: ' . $parsed['minPrice'] . ($parsed['national'] ? ' (ארצי — לא בתל אביב)' : ''), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) . ';
     </script>';
     sf();
 
@@ -219,6 +222,10 @@ foreach ($results as $r) {
     $sheet->setCellValueExplicit('C' . $row, $r['returnedBarcode'], DataType::TYPE_STRING);
     $sheet->setCellValue('D' . $row, $r['maxPrice']);
     $sheet->setCellValue('E' . $row, $r['minPrice']);
+    if (!empty($r['national'])) {   // national range (no Tel Aviv store sells it): yellow + a note
+        $sheet->getStyle("D{$row}:E{$row}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('FFF3B0');
+        $sheet->getComment("D{$row}")->getText()->createTextRun('מחיר ארצי — המוצר לא נמכר בתל אביב');
+    }
 }
 
 foreach (range('B', 'G') as $col) {
@@ -288,7 +295,7 @@ function priceStatus($r) {
         <td><?= htmlspecialchars($r['maxPrice']) ?></td>
         <td><?= htmlspecialchars($r['minPrice']) ?></td>
         <td><?= number_format($r['salePrice'], 2) ?></td>
-        <td class="<?= $tdCls ?>"><?= $label ?></td>
+        <td class="<?= $tdCls ?>"><?= $label ?><?= !empty($r['national']) ? ' <small>(מחיר ארצי)</small>' : '' ?></td>
     </tr>
     <?php endforeach; ?>
 </table>

@@ -26,21 +26,30 @@ $updateRunning = function () {
     return $alive;
 };
 
-// "עדכן עכשיו": start update.js in the background (it takes ~12 minutes).
-if (($_POST['action'] ?? '') === 'update') {
+// The two background jobs (one at a time — they write the same database):
+//   update   update.js  — Tel Aviv prices, daily (~12 minutes)
+//   catalog  catalog.js — every store in the country, for product names + a national price range, weekly
+$jobs = ['update' => 'update.js', 'catalog' => 'catalog.js'];
+if (isset($jobs[$_POST['action'] ?? ''])) {
     header('Content-Type: application/json; charset=utf-8');
+    $job = $_POST['action'];
     if ($updateRunning()) exit(json_encode(['ok' => true, 'already' => true]));
-    file_put_contents(UPDATE_LOCK, '{}');
+    file_put_contents(UPDATE_LOCK, json_encode(['job' => $job]));
+    if ($job === 'catalog') @unlink(PRICES_DIR . '/data/progress.json');
     $dir = str_replace('/', '\\', PRICES_DIR);
-    $cmd = 'cd /d "' . $dir . '" && "' . NODE_EXE . '" --no-warnings update.js > data\\update.log 2>&1 & del data\\update.running';
+    $cmd = 'cd /d "' . $dir . '" && "' . NODE_EXE . '" --no-warnings ' . $jobs[$job] . ' > data\\' . $job . '.log 2>&1 & del data\\update.running';
     pclose(popen('start "" /B cmd /c "' . $cmd . '"', 'r'));
     exit(json_encode(['ok' => true]));
 }
-// Progress of the background update: running? + the log's last lines.
+// Progress of the background job: running? which job, the log's last lines, and catalog.js's progress.
 if (($_GET['action'] ?? '') === 'status') {
     header('Content-Type: application/json; charset=utf-8');
-    $log = is_file(UPDATE_LOG) ? preg_split('/\r?\n/', trim((string) file_get_contents(UPDATE_LOG))) : [];
-    exit(json_encode(['running' => $updateRunning(), 'log' => array_slice($log, -12)], JSON_UNESCAPED_UNICODE));
+    $running = $updateRunning();
+    $job = $running ? (json_decode((string) @file_get_contents(UPDATE_LOCK), true)['job'] ?? 'update') : null;
+    $logFile = PRICES_DIR . '/data/' . ($job ?: 'update') . '.log';
+    $log = is_file($logFile) ? preg_split('/\r?\n/', trim((string) file_get_contents($logFile))) : [];
+    $progress = $job === 'catalog' ? json_decode((string) @file_get_contents(PRICES_DIR . '/data/progress.json'), true) : null;
+    exit(json_encode(['running' => $running, 'job' => $job, 'log' => array_slice($log, -12), 'progress' => $progress], JSON_UNESCAPED_UNICODE));
 }
 
 $chainNames = [];
@@ -74,6 +83,10 @@ if ($db) {
     $qPrices = $db->prepare("SELECT p.chain, p.store_id, p.price, p.date, s.name store FROM current_prices p
         LEFT JOIN stores s ON s.chain = p.chain AND s.store_id = p.store_id WHERE p.barcode = ? AND $activeOnly ORDER BY p.price, p.chain");
     $qVariants = $db->prepare('SELECT chain, name, manufacturer FROM variants WHERE barcode = ?');
+    // The national catalog (catalog.js) — absent until its first run.
+    $hasCatalog = (bool) $db->query("SELECT 1 FROM sqlite_master WHERE name = 'catalog_runs'")->fetchColumn();
+    $qNational = $hasCatalog ? $db->prepare('SELECT * FROM national_prices WHERE barcode = ?') : null;
+    $lastCatalog = $hasCatalog ? ($db->query('SELECT * FROM catalog_runs ORDER BY finished DESC LIMIT 1')->fetch(PDO::FETCH_ASSOC) ?: null) : null;
     foreach ($barcodes as $b) {
         // Chains sometimes write a barcode with leading zeros dropped or added.
         $keys = array_unique([$b, ltrim($b, '0')]);
@@ -85,13 +98,18 @@ if ($db) {
             }
         }
         $prices = $variants = [];
+        $national = null;
         if ($card) {
             $qPrices->execute([$card['barcode']]);
             $prices = $qPrices->fetchAll(PDO::FETCH_ASSOC);
             $qVariants->execute([$card['barcode']]);
             $variants = $qVariants->fetchAll(PDO::FETCH_ASSOC);
+            if ($qNational) {
+                $qNational->execute([$card['barcode']]);
+                $national = $qNational->fetch(PDO::FETCH_ASSOC) ?: null;
+            }
         }
-        $results[] = ['barcode' => $b, 'card' => $card, 'prices' => $prices, 'variants' => $variants];
+        $results[] = ['barcode' => $b, 'card' => $card, 'prices' => $prices, 'variants' => $variants, 'national' => $national];
     }
 }
 
@@ -150,29 +168,67 @@ $found = count(array_filter($results, fn($r) => $r['card']));
     .update-row { display: flex; gap: 12px; align-items: center; justify-content: center; margin: -8px 0 18px; flex-wrap: wrap; }
     .btn-update { padding: 8px 16px; font-size: 15px; background: #2e7d32; }
     .btn-update:disabled { background: #999; cursor: default; }
+    .range.national { color: #8a6d00; }
+    .btn-update.catalog { background: #6a4c93; }
+    .bar { height: 22px; background: #e6e6e6; border-radius: 11px; overflow: hidden; margin: 0 0 8px; }
+    .bar > div { height: 100%; background: linear-gradient(90deg, #6a4c93, #8e6cc0); width: 0; transition: width .6s; }
+    .bar-text { text-align: center; font-size: 15px; color: #444; margin-bottom: 6px; }
+    .bar-chains { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 14px; font-size: 13px; color: #666; margin-bottom: 18px; }
+    .catalog-sum { margin: 0 0 18px; padding: 0; }
+    .catalog-sum summary { text-align: center; }
+    .catalog-sum .cols { display: flex; gap: 18px; flex-wrap: wrap; }
+    .catalog-sum .cols > div { flex: 1; min-width: 300px; }
+    .catalog-sum td.num, .catalog-sum th.num { text-align: left; direction: ltr; }
     .upd-log { direction: ltr; text-align: left; background: #1e1e1e; color: #ddd; font-size: 13px; padding: 10px 14px; border-radius: 8px; margin: 0 0 18px; white-space: pre-wrap; max-height: 260px; overflow: auto; }
 </style>
 <script>
     let wasRunning = false;
-    async function startUpdate() {
-        document.getElementById('updBtn').disabled = true;
-        await fetch('?', { method: 'POST', body: new URLSearchParams({ action: 'update' }) });
+    const $ = id => document.getElementById(id);
+    const fmt = n => Number(n || 0).toLocaleString('en-US');
+    async function startJob(job) {
+        document.querySelectorAll('.btn-update').forEach(b => b.disabled = true);
+        await fetch('?', { method: 'POST', body: new URLSearchParams({ action: job }) });
         wasRunning = true;
         poll();
     }
+    // catalog.js's progress: a bar over all stores in the country, and each chain's count
+    function showProgress(p) {
+        const box = $('catProgress');
+        box.style.display = 'block';
+        if (!p || p.phase === 'stores') {
+            $('barFill').style.width = '2%';
+            $('barText').textContent = 'מוריד את רשימות הסניפים מכל הרשתות…' + (p && p.total ? ` (${fmt(p.total)} סניפים עד כה)` : '');
+        } else if (p.phase === 'download') {
+            $('barFill').style.width = (p.total ? Math.round(100 * p.done / p.total) : 0) + '%';
+            $('barText').textContent = `${fmt(p.done)} / ${fmt(p.total)} סניפים (${p.total ? Math.round(100 * p.done / p.total) : 0}%) · `
+                + `${fmt(p.barcodes)} ברקודים · ${fmt(p.newBarcodes)} חדשים (לא בתל אביב) · ${Math.round(p.mb)} MB`
+                + (p.failed ? ` · ${p.failed} נכשלו` : '');
+        } else if (p.phase === 'saving') {
+            $('barFill').style.width = '100%';
+            $('barText').textContent = 'שומר במאגר ובונה כרטיסי מוצר…';
+        }
+        $('barChains').innerHTML = p ? Object.values(p.chains).map(c => {
+            const t = c.error ? '✗ נכשלה' : c.total && c.done === c.total ? '✓ ' + fmt(c.barcodes) + ' ברקודים' : `${c.done}/${c.total || '?'}`;
+            return `<div>${c.name}: ${t}</div>`;
+        }).join('') : '';
+    }
     async function poll() {
         const s = await (await fetch('?action=status')).json();
-        const btn = document.getElementById('updBtn'), log = document.getElementById('updLog');
         if (s.running) {
             wasRunning = true;
-            btn.disabled = true;
-            btn.textContent = '⟳ מעדכן…';
-            log.style.display = 'block';
-            log.textContent = s.log.join('\n') || 'מתחיל…';
-            log.scrollTop = log.scrollHeight;
-            setTimeout(poll, 3000);
+            document.querySelectorAll('.btn-update').forEach(b => b.disabled = true);
+            $(s.job === 'catalog' ? 'catBtn' : 'updBtn').textContent = '⟳ מעדכן…';
+            if (s.job === 'catalog') {
+                showProgress(s.progress);
+            } else {
+                const log = $('updLog');
+                log.style.display = 'block';
+                log.textContent = s.log.join('\n') || 'מתחיל…';
+                log.scrollTop = log.scrollHeight;
+            }
+            setTimeout(poll, 2000);
         } else if (wasRunning) {
-            location.reload();   // done — show the new date and counts
+            location.reload();   // done — show the new date, counts and summary
         }
     }
     document.addEventListener('DOMContentLoaded', poll);   // a run started earlier is still shown
@@ -220,10 +276,47 @@ $found = count(array_filter($results, fn($r) => $r['card']));
         <?php endif; ?>
     <?php endif; ?>
     <div class="update-row">
-        <button type="button" id="updBtn" class="btn-update" onclick="startUpdate()">⟳ עדכן עכשיו מהרשתות</button>
-        <span class="muted">הורדת המחירים העדכניים מכל הרשתות — כ-10 דקות. אפשר להמשיך לעבוד בינתיים.</span>
+        <button type="button" id="updBtn" class="btn-update" onclick="startJob('update')">⟳ עדכן מחירי תל אביב</button>
+        <span class="muted">יומי · כ-12 דקות</span>
+        <button type="button" id="catBtn" class="btn-update catalog" onclick="startJob('catalog')">⟳ עדכן קטלוג ארצי</button>
+        <span class="muted">שבועי · כל הסניפים בארץ, לזיהוי מוצרים</span>
     </div>
+    <span class="muted" style="display:block;text-align:center;margin:-10px 0 16px">אפשר להמשיך לעבוד בזמן העדכון, גם לסגור את הדף.</span>
     <pre id="updLog" class="upd-log" style="display:none"></pre>
+    <div id="catProgress" style="display:none">
+        <div class="bar"><div id="barFill"></div></div>
+        <div class="bar-text" id="barText"></div>
+        <div class="bar-chains" id="barChains"></div>
+    </div>
+
+    <?php if (!empty($lastCatalog)): ?>
+        <?php $cs = json_decode($lastCatalog['summary'], true); $t = $cs['totals']; $age = (int) floor((time() - strtotime($lastCatalog['finished'])) / 86400); ?>
+        <details class="catalog-sum">
+            <summary>קטלוג ארצי: <?= number_format($t['barcodes']) ?> ברקודים מ-<?= number_format($t['stores']) ?> סניפים בכל הארץ ·
+                <?= number_format($t['newBarcodes']) ?> מהם לא נמכרים בתל אביב · עודכן <?= date('d/m/Y', strtotime($lastCatalog['finished'])) ?>
+                <?= $age >= 7 ? ' — מומלץ לעדכן (פעם בשבוע)' : '' ?></summary>
+            <p class="muted">מוצרים במאגר: <?= number_format($t['productsBefore']) ?> → <?= number_format($t['productsAfter']) ?> ·
+                <?= (int) $t['mb'] ?> MB · <?= round($t['seconds'] / 60) ?> דקות<?= $t['failed'] ? " · {$t['failed']} סניפים בלי קובץ" : '' ?></p>
+            <div class="cols">
+                <div><table>
+                    <tr><th>רשת</th><th class="num">סניפים</th><th class="num">ברקודים</th><th class="num">לא בתל אביב</th></tr>
+                    <?php foreach ($cs['chains'] as $c): ?>
+                        <tr><td><?= htmlspecialchars($c['name']) ?><?= $c['error'] ? ' <span class="muted">(נכשלה)</span>' : '' ?></td>
+                            <td class="num"><?= $c['done'] - $c['failed'] ?><?= $c['failed'] ? "/{$c['total']}" : '' ?></td>
+                            <td class="num"><?= number_format($c['barcodes']) ?></td><td class="num"><?= number_format($c['newBarcodes']) ?></td></tr>
+                    <?php endforeach; ?>
+                </table></div>
+                <div><table>
+                    <tr><th>מחוז</th><th class="num">סניפים</th><th class="num">ברקודים</th><th class="num">לא בתל אביב</th></tr>
+                    <?php foreach ($cs['districts'] as $d): ?>
+                        <tr><td><?= htmlspecialchars($d['district']) ?></td><td class="num"><?= $d['stores'] ?></td>
+                            <td class="num"><?= number_format($d['barcodes']) ?></td><td class="num"><?= number_format($d['newBarcodes']) ?></td></tr>
+                    <?php endforeach; ?>
+                </table></div>
+            </div>
+            <p class="muted">"לא בתל אביב" — ברקודים שלא היו במאגר מחירי תל אביב: בזכותם מוצר שלא נמכר בתל אביב מקבל שם, ו-NP מקבל עבורו טווח מחירים ארצי (מסומן בצהוב).</p>
+        </details>
+    <?php endif; ?>
 
     <form method="get">
         <textarea name="b" placeholder="הדבק ברקודים — אחד בשורה, או מופרדים בפסיק/רווח"><?= htmlspecialchars($input) ?></textarea>
@@ -246,6 +339,10 @@ $found = count(array_filter($results, fn($r) => $r['card']));
                     <?php if ($p): ?>
                         <span class="range"><?= min($p) == max($p) ? '₪' . $money(min($p)) : '₪' . $money(min($p)) . ' – ₪' . $money(max($p)) ?></span>
                         <span class="muted"><?= count($p) ?> סניפים</span>
+                    <?php elseif ($n = $r['national']): ?>
+                        <span class="range national"><?= $n['min'] == $n['max'] ? '₪' . $money($n['min']) : '₪' . $money($n['min']) . ' – ₪' . $money($n['max']) ?></span>
+                        <span class="muted">ארצי · לא בתל אביב · <?= (int) $n['stores'] ?> סניפים
+                            (<?= htmlspecialchars(implode(', ', array_map(fn($c) => $chainNames[$c] ?? $c, explode(',', $n['chains'])))) ?>)</span>
                     <?php endif; ?>
                 </div>
                 <?php if ($r['card']): ?>

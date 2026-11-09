@@ -144,6 +144,24 @@ class CPDClient {
             ];
         }
 
+        // Not sold in Tel Aviv: the national range (catalog.js, all stores in the country)
+        // as two "stores", so callers that take min / max keep working; 'national' marks it.
+        $national = null;
+        if (!$prices) {
+            try {
+                $q = $this->db->prepare('SELECT * FROM national_prices WHERE barcode = ?');
+                $q->execute([$card['barcode']]);
+                $national = $q->fetch(PDO::FETCH_ASSOC) ?: null;
+            } catch (Throwable $e) {}   // no catalog run yet
+            if ($national) {
+                $national['chains'] = implode(', ', array_map([$this, 'chainName'], explode(',', $national['chains'])));
+                foreach (array_unique([$national['min'], $national['max']]) as $p) {
+                    $prices[] = ['store' => "ארצי – {$national['stores']} סניפים ({$national['chains']})", 'address' => '',
+                        'price' => number_format((float) $p, 2, '.', ''), 'chain' => ''];
+                }
+            }
+        }
+
         if (!empty($aiName['product'])) {
             $productName = $aiName['size'] !== '' ? "{$aiName['product']}, {$aiName['size']}" : $aiName['product'];
             $brand = $aiName['brand'];
@@ -169,6 +187,7 @@ class CPDClient {
             'size'         => (string) $card['size'],
             'displayName'  => (string) $card['display_name'],
             'aiName'       => !empty($aiName['product']),
+            'national'     => $national,   // set when the prices are the national range, not Tel Aviv's
             'source'       => 'CPD',
         ];
     }

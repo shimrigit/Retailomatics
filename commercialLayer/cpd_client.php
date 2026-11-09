@@ -20,6 +20,8 @@
 
 define('CPD_DB_PATH', 'C:/RetailAgents/PriceTransparency/data/cpd.sqlite');
 define('CPD_CHAINS_PATH', 'C:/RetailAgents/PriceTransparency/chains.json');
+// A store this many days behind the newest data gets a warning (update.js hides it at 14).
+define('CPD_WARN_DAYS', 3);
 
 class CPDClient {
     private $db = null;
@@ -54,10 +56,43 @@ class CPDClient {
         return $this->db->query('SELECT MAX(updated) FROM stores')->fetchColumn() ?: null;
     }
 
-    /** True when the data isn't from today (the daily update didn't run). */
+    /**
+     * The stores' freshness, measured against the newest data in CPD (not the
+     * calendar — a week without pressing "update" isn't a store problem):
+     *   total / today   active stores, and how many have today's prices
+     *   newest          the newest store's date
+     *   behind          active stores with older prices than newest: [{chain, name, updated, days}]
+     *   warn            those CPD_WARN_DAYS or more days behind (a store, or a whole chain, not publishing)
+     *   hidden          stores update.js hid (closed / silent 14 days): [{chain, name, reason, since}]
+     */
+    public function coverage() {
+        $out = ['total' => 0, 'today' => 0, 'newest' => null, 'behind' => [], 'warn' => [], 'hidden' => []];
+        if (!$this->db) return $out;
+        $stores = $this->db->query('SELECT * FROM stores ORDER BY updated, chain')->fetchAll(PDO::FETCH_ASSOC);
+        $active = array_filter($stores, fn($s) => ($s['active'] ?? 1) == 1);
+        $out['newest'] = $active ? max(array_column($active, 'updated')) : null;
+        foreach ($stores as $s) {
+            if (($s['active'] ?? 1) != 1) {
+                $out['hidden'][] = ['chain' => $this->chainName($s['chain']), 'name' => $s['name'],
+                    'reason' => $s['inactive_reason'], 'since' => $s['inactive_since']];
+                continue;
+            }
+            $out['total']++;
+            if (substr((string) $s['updated'], 0, 10) === date('Y-m-d')) $out['today']++;
+            $days = (int) round((strtotime($out['newest']) - strtotime($s['updated'])) / 86400);
+            if ($days >= 1) {
+                $row = ['chain' => $this->chainName($s['chain']), 'name' => $s['name'], 'updated' => $s['updated'], 'days' => $days];
+                $out['behind'][] = $row;
+                if ($days >= CPD_WARN_DAYS) $out['warn'][] = $row;
+            }
+        }
+        return $out;
+    }
+
+    /** True when the data isn't from today, or some stores are CPD_WARN_DAYS+ days behind. */
     public function isStale() {
-        $updated = $this->lastUpdated();
-        return !$updated || substr($updated, 0, 10) < date('Y-m-d');
+        $c = $this->coverage();
+        return !$c['newest'] || $c['newest'] < date('Y-m-d') || $c['warn'] !== [];
     }
 
     /** The product card (products row) for a barcode, or null. */
@@ -97,7 +132,7 @@ class CPDClient {
 
         $q = $this->db->prepare('SELECT p.chain, p.store_id, p.price, s.name store, s.address FROM current_prices p
             LEFT JOIN stores s ON s.chain = p.chain AND s.store_id = p.store_id
-            WHERE p.barcode = ? AND p.price > 0 ORDER BY p.price, p.chain');
+            WHERE p.barcode = ? AND p.price > 0 AND COALESCE(s.active, 1) = 1 ORDER BY p.price, p.chain');
         $q->execute([$card['barcode']]);
         $prices = [];
         foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $p) {

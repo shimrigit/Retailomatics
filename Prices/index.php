@@ -10,6 +10,39 @@ if (!in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true) || !emp
 }
 
 define('PRICES_DIR', 'C:/RetailAgents/PriceTransparency');
+define('UPDATE_LOG', PRICES_DIR . '/data/update.log');
+define('UPDATE_LOCK', PRICES_DIR . '/data/update.running');   // {pid, started} while update.js runs (it removes it on exit)
+define('NODE_EXE', 'C:\\Program Files\\nodejs\\node.exe');
+require_once __DIR__ . '/../commercialLayer/cpd_client.php';
+
+// Is an update running? update.js writes its pid into the lock; a lock whose
+// process is gone is from a run that died (computer stuck / turned off) — drop it.
+$updateRunning = function () {
+    if (!is_file(UPDATE_LOCK)) return false;
+    $lock = json_decode((string) @file_get_contents(UPDATE_LOCK), true);
+    if (empty($lock['pid'])) return time() - filemtime(UPDATE_LOCK) < 60;   // just started — node hasn't written its pid yet
+    $alive = stripos((string) shell_exec('tasklist /FI "PID eq ' . (int) $lock['pid'] . '" /NH'), 'node.exe') !== false;
+    if (!$alive) @unlink(UPDATE_LOCK);
+    return $alive;
+};
+
+// "עדכן עכשיו": start update.js in the background (it takes ~12 minutes).
+if (($_POST['action'] ?? '') === 'update') {
+    header('Content-Type: application/json; charset=utf-8');
+    if ($updateRunning()) exit(json_encode(['ok' => true, 'already' => true]));
+    file_put_contents(UPDATE_LOCK, '{}');
+    $dir = str_replace('/', '\\', PRICES_DIR);
+    $cmd = 'cd /d "' . $dir . '" && "' . NODE_EXE . '" --no-warnings update.js > data\\update.log 2>&1 & del data\\update.running';
+    pclose(popen('start "" /B cmd /c "' . $cmd . '"', 'r'));
+    exit(json_encode(['ok' => true]));
+}
+// Progress of the background update: running? + the log's last lines.
+if (($_GET['action'] ?? '') === 'status') {
+    header('Content-Type: application/json; charset=utf-8');
+    $log = is_file(UPDATE_LOG) ? preg_split('/\r?\n/', trim((string) file_get_contents(UPDATE_LOG))) : [];
+    exit(json_encode(['running' => $updateRunning(), 'log' => array_slice($log, -12)], JSON_UNESCAPED_UNICODE));
+}
+
 $chainNames = [];
 foreach ((json_decode((string) @file_get_contents(PRICES_DIR . '/chains.json'), true)['chains'] ?? []) as $c) {
     $chainNames[$c['key']] = $c['name'];
@@ -33,11 +66,13 @@ $lastRun = null;
 $counts = null;
 if ($db) {
     $lastRun = $db->query('SELECT * FROM runs ORDER BY finished DESC LIMIT 1')->fetch(PDO::FETCH_ASSOC) ?: null;
-    $counts = $db->query("SELECT (SELECT COUNT(*) FROM stores) stores, (SELECT COUNT(*) FROM products) products,
-        (SELECT MAX(updated) FROM stores) updated")->fetch(PDO::FETCH_ASSOC);
+    $hasActive = (bool) $db->query("SELECT 1 FROM pragma_table_info('stores') WHERE name = 'active'")->fetchColumn();
+    $activeOnly = $hasActive ? 'COALESCE(s.active, 1) = 1' : '1';   // hidden stores (closed / silent 14 days) are left out
+    $counts = $db->query("SELECT (SELECT COUNT(*) FROM stores s WHERE $activeOnly) stores, (SELECT COUNT(*) FROM products) products,
+        (SELECT MAX(updated) FROM stores s WHERE $activeOnly) updated")->fetch(PDO::FETCH_ASSOC);
     $qCard = $db->prepare('SELECT * FROM products WHERE barcode = ?');
-    $qPrices = $db->prepare('SELECT p.chain, p.store_id, p.price, p.date, s.name store FROM current_prices p
-        LEFT JOIN stores s ON s.chain = p.chain AND s.store_id = p.store_id WHERE p.barcode = ? ORDER BY p.price, p.chain');
+    $qPrices = $db->prepare("SELECT p.chain, p.store_id, p.price, p.date, s.name store FROM current_prices p
+        LEFT JOIN stores s ON s.chain = p.chain AND s.store_id = p.store_id WHERE p.barcode = ? AND $activeOnly ORDER BY p.price, p.chain");
     $qVariants = $db->prepare('SELECT chain, name, manufacturer FROM variants WHERE barcode = ?');
     foreach ($barcodes as $b) {
         // Chains sometimes write a barcode with leading zeros dropped or added.
@@ -108,7 +143,40 @@ $found = count(array_filter($results, fn($r) => $r['card']));
     table { width: 100%; border-collapse: collapse; font-size: 15px; }
     th, td { border: 1px solid #e3e3e3; padding: 6px 8px; text-align: right; } th { background: #f0f4f8; }
     .muted { color: #888; font-size: 14px; }
+    .status.ok { color: #2e7d32; margin-top: -14px; }
+    .status.warn + .status.warn { margin-top: -14px; }
+    .run-errors { margin: -10px 0 16px; color: #8a4b00; font-size: 14px; text-align: center; }
+    .run-errors ul { text-align: right; }
+    .update-row { display: flex; gap: 12px; align-items: center; justify-content: center; margin: -8px 0 18px; flex-wrap: wrap; }
+    .btn-update { padding: 8px 16px; font-size: 15px; background: #2e7d32; }
+    .btn-update:disabled { background: #999; cursor: default; }
+    .upd-log { direction: ltr; text-align: left; background: #1e1e1e; color: #ddd; font-size: 13px; padding: 10px 14px; border-radius: 8px; margin: 0 0 18px; white-space: pre-wrap; max-height: 260px; overflow: auto; }
 </style>
+<script>
+    let wasRunning = false;
+    async function startUpdate() {
+        document.getElementById('updBtn').disabled = true;
+        await fetch('?', { method: 'POST', body: new URLSearchParams({ action: 'update' }) });
+        wasRunning = true;
+        poll();
+    }
+    async function poll() {
+        const s = await (await fetch('?action=status')).json();
+        const btn = document.getElementById('updBtn'), log = document.getElementById('updLog');
+        if (s.running) {
+            wasRunning = true;
+            btn.disabled = true;
+            btn.textContent = '⟳ מעדכן…';
+            log.style.display = 'block';
+            log.textContent = s.log.join('\n') || 'מתחיל…';
+            log.scrollTop = log.scrollHeight;
+            setTimeout(poll, 3000);
+        } else if (wasRunning) {
+            location.reload();   // done — show the new date and counts
+        }
+    }
+    document.addEventListener('DOMContentLoaded', poll);   // a run started earlier is still shown
+</script>
 </head>
 <body>
 <div class="card">
@@ -123,7 +191,39 @@ $found = count(array_filter($results, fn($r) => $r['card']));
             <?php if ($lastRun): ?>(ריצה אחרונה <?= htmlspecialchars(date('d/m H:i', strtotime($lastRun['finished']))) ?>)<?php endif; ?>
             <?= $stale ? ' — הנתונים לא מהיום' : '' ?>
         </div>
+        <?php
+        $cov = (new CPDClient())->coverage();
+        $runErrors = $lastRun ? (json_decode((string) $lastRun['errors'], true) ?: []) : [];
+        ?>
+        <?php $storeList = fn($rows) => htmlspecialchars(implode(' · ', array_map(fn($s) => "{$s['chain']} {$s['name']} ({$s['days']} ימים)", $rows))); ?>
+        <?php if ($cov['warn']): ?>
+            <div class="status warn">⚠ <?= count($cov['warn']) ?> סניפים לא התעדכנו <?= CPD_WARN_DAYS ?> ימים ויותר: <?= $storeList($cov['warn']) ?>
+                <br>(אחרי 14 ימים סניף מוסתר אוטומטית — כנראה נסגר)</div>
+        <?php endif; ?>
+        <?php $minor = array_filter($cov['behind'], fn($s) => $s['days'] < CPD_WARN_DAYS); ?>
+        <?php if ($minor): ?>
+            <div class="status">מפגרים ביום-יומיים (רגיל — לפעמים רשת לא מפרסמת קובץ): <?= $storeList($minor) ?></div>
+        <?php elseif (!$cov['warn'] && !$stale): ?>
+            <div class="status ok">✓ כל <?= $cov['total'] ?> הסניפים עודכנו היום</div>
+        <?php endif; ?>
+        <?php if ($cov['hidden']): ?>
+            <details class="run-errors"><summary><?= count($cov['hidden']) ?> סניפים מוסתרים (נסגרו / לא מפרסמים) — פירוט</summary>
+                <ul><?php foreach ($cov['hidden'] as $h): ?>
+                    <li><?= htmlspecialchars("{$h['chain']} {$h['name']}") ?> — <?= str_starts_with((string) $h['reason'], 'not in') ? 'הוסר מרשימת הסניפים של הרשת' : 'לא פרסם מחירים 14 ימים ויותר' ?>
+                        (מ-<?= htmlspecialchars(date('d/m/Y', strtotime((string) $h['since']))) ?>)</li>
+                <?php endforeach; ?></ul>
+                <span class="muted">סניף מוסתר חוזר לבד כשהוא מפרסם מחירים שוב.</span></details>
+        <?php endif; ?>
+        <?php if ($runErrors): ?>
+            <details class="run-errors"><summary>בריצה האחרונה נכשלו <?= count($runErrors) ?> — פירוט</summary>
+                <ul><?php foreach ($runErrors as $e): ?><li><?= htmlspecialchars($e) ?></li><?php endforeach; ?></ul></details>
+        <?php endif; ?>
     <?php endif; ?>
+    <div class="update-row">
+        <button type="button" id="updBtn" class="btn-update" onclick="startUpdate()">⟳ עדכן עכשיו מהרשתות</button>
+        <span class="muted">הורדת המחירים העדכניים מכל הרשתות — כ-10 דקות. אפשר להמשיך לעבוד בינתיים.</span>
+    </div>
+    <pre id="updLog" class="upd-log" style="display:none"></pre>
 
     <form method="get">
         <textarea name="b" placeholder="הדבק ברקודים — אחד בשורה, או מופרדים בפסיק/רווח"><?= htmlspecialchars($input) ?></textarea>

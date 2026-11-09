@@ -153,8 +153,16 @@ function sf() { echo str_pad('', 512, ' '); flush(); }
     <?php if (!$cpd->available()): ?>
 <div class="warn-box"><h4>⚠ <?= htmlspecialchars($cpd->error) ?></h4><div class="warn-row">כל הברקודים יסומנו NA.</div></div>
     <?php elseif ($cpd->isStale()): ?>
-<div class="warn-box"><h4>⚠ מחירי CPD לא מהיום — עודכנו לאחרונה <?= htmlspecialchars(date('d/m/Y', strtotime($cpd->lastUpdated()))) ?></h4>
-<div class="warn-row">כדי לעדכן: node update.js ב-C:\RetailAgents\PriceTransparency (כ-10 דקות). אפשר להמשיך עם המחירים הקיימים.</div></div>
+        <?php $cov = $cpd->coverage(); ?>
+<div class="warn-box">
+    <?php if (!$cov['newest'] || $cov['newest'] < date('Y-m-d')): ?>
+    <h4>⚠ מחירי CPD לא מהיום — עודכנו לאחרונה <?= htmlspecialchars($cov['newest'] ? date('d/m/Y', strtotime($cov['newest'])) : '—') ?></h4>
+    <?php endif; ?>
+    <?php if ($cov['warn']): ?>
+    <h4>⚠ <?= count($cov['warn']) ?> סניפים לא התעדכנו <?= CPD_WARN_DAYS ?> ימים ויותר (המחירים שלהם ישנים)</h4>
+    <div class="warn-row"><?= htmlspecialchars(implode(' · ', array_map(fn($s) => "{$s['chain']} {$s['name']} ({$s['days']} ימים)", array_slice($cov['warn'], 0, 12)))) ?><?= count($cov['warn']) > 12 ? ' …' : '' ?></div>
+    <?php endif; ?>
+<div class="warn-row">כדי לעדכן: <a href="/website/Prices/" target="_blank">דף מחירי רשתות</a> ← "עדכן עכשיו" (כ-12 דקות). אפשר להמשיך עם המחירים הקיימים.</div></div>
     <?php endif; ?>
 <?php endif; ?>
 

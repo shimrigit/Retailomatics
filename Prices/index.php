@@ -165,9 +165,13 @@ $found = count(array_filter($results, fn($r) => $r['card']));
     .status.warn + .status.warn { margin-top: -14px; }
     .run-errors { margin: -10px 0 16px; color: #8a4b00; font-size: 14px; text-align: center; }
     .run-errors ul { text-align: right; }
-    .update-row { display: flex; gap: 12px; align-items: center; justify-content: center; margin: -8px 0 18px; flex-wrap: wrap; }
     .btn-update { padding: 8px 16px; font-size: 15px; background: #2e7d32; }
     .btn-update:disabled { background: #999; cursor: default; }
+    .runs { display: flex; gap: 16px; flex-wrap: wrap; margin: 0 0 14px; }
+    .run-box { flex: 1; min-width: 300px; border: 1px solid #e3e3e3; border-radius: 10px; padding: 14px 18px; background: #fafbfc; font-size: 15px; line-height: 1.7; color: #444; }
+    .run-box h4 { margin: 0 0 6px; font-size: 18px; color: #333; }
+    .run-box .btn-update { margin-top: 10px; }
+    .warn-text { color: #8a4b00; font-weight: bold; }
     .range.national { color: #8a6d00; }
     .btn-update.catalog { background: #6a4c93; }
     .bar { height: 22px; background: #e6e6e6; border-radius: 11px; overflow: hidden; margin: 0 0 8px; }
@@ -240,13 +244,47 @@ $found = count(array_filter($results, fn($r) => $r['card']));
     <?php if ($error): ?>
         <div class="status warn"><?= htmlspecialchars($error) ?></div>
     <?php elseif ($counts): ?>
-        <?php $stale = $counts['updated'] < date('Y-m-d'); ?>
-        <div class="status <?= $stale ? 'warn' : '' ?>">
-            תל אביב · <?= (int) $counts['stores'] ?> סניפים · <?= number_format((int) $counts['products']) ?> מוצרים ·
-            עודכן: <?= htmlspecialchars(date('d/m/Y', strtotime($counts['updated']))) ?>
-            <?php if ($lastRun): ?>(ריצה אחרונה <?= htmlspecialchars(date('d/m H:i', strtotime($lastRun['finished']))) ?>)<?php endif; ?>
-            <?= $stale ? ' — הנתונים לא מהיום' : '' ?>
+        <?php
+        // Run times are stored in UTC (ISO); shown in Israel time.
+        $il   = new DateTimeZone('Asia/Jerusalem');
+        $when = fn($iso) => (new DateTime($iso))->setTimezone($il)->format('d/m/Y H:i');
+        $dur  = function ($from, $to) {
+            $s = max(0, strtotime($to) - strtotime($from));
+            return $s < 60 ? "{$s} שניות" : ($s < 3600 ? intdiv($s, 60) . ':' . sprintf('%02d', $s % 60) . ' דקות'
+                : intdiv($s, 3600) . ':' . sprintf('%02d', intdiv($s % 3600, 60)) . ' שעות');
+        };
+        $num   = fn($v) => $v === null ? '—' : number_format((int) $v);
+        $stale = $counts['updated'] < CPDClient::today();
+        $cs    = !empty($lastCatalog) ? json_decode($lastCatalog['summary'], true) : null;
+        $age   = $cs ? (int) floor((time() - strtotime($lastCatalog['finished'])) / 86400) : null;
+        ?>
+        <div class="runs">
+            <div class="run-box">
+                <h4>מחירי תל אביב <span class="muted">· יומי</span></h4>
+                <?php if ($lastRun): ?>
+                    <div>ריצה אחרונה: <b><?= $when($lastRun['finished']) ?></b> · משך <?= $dur($lastRun['started'], $lastRun['finished']) ?></div>
+                    <div><?= (int) $lastRun['stores'] ?> סניפים · <?= $num($lastRun['items']) ?> מחירים</div>
+                    <div><b><?= $num($lastRun['changed'] ?? null) ?></b> מחירים השתנו · <b><?= $num($lastRun['new_products'] ?? null) ?></b> מוצרים חדשים</div>
+                <?php else: ?>
+                    <div class="muted">עוד לא רץ</div>
+                <?php endif; ?>
+                <?php if ($stale): ?><div class="warn-text">הנתונים לא מהיום — כדאי לעדכן</div><?php endif; ?>
+                <button type="button" id="updBtn" class="btn-update" onclick="startJob('update')">⟳ עדכן מחירי תל אביב</button>
+            </div>
+            <div class="run-box">
+                <h4>קטלוג ארצי <span class="muted">· שבועי, כל הסניפים בארץ</span></h4>
+                <?php if ($cs): $t = $cs['totals']; ?>
+                    <div>ריצה אחרונה: <b><?= $when($lastCatalog['finished']) ?></b> · משך <?= $dur($lastCatalog['started'], $lastCatalog['finished']) ?></div>
+                    <div><?= $num($t['stores']) ?> מתוך <?= $num($t['listed']) ?> סניפים · <?= $num($t['barcodes']) ?> ברקודים</div>
+                    <div><b><?= $num($t['productsAfter'] - $t['productsBefore']) ?></b> מוצרים חדשים נוספו · <?= $num($t['newBarcodes']) ?> לא נמכרים בתל אביב</div>
+                    <?php if ($age >= 7): ?><div class="warn-text">עברו <?= $age ?> ימים — כדאי לעדכן</div><?php endif; ?>
+                <?php else: ?>
+                    <div class="muted">עוד לא רץ</div>
+                <?php endif; ?>
+                <button type="button" id="catBtn" class="btn-update catalog" onclick="startJob('catalog')">⟳ עדכן קטלוג ארצי</button>
+            </div>
         </div>
+        <div class="status">במאגר: <?= number_format((int) $counts['products']) ?> מוצרים · אפשר להמשיך לעבוד בזמן עדכון, גם לסגור את הדף.</div>
         <?php
         $cov = (new CPDClient())->coverage();
         $runErrors = $lastRun ? (json_decode((string) $lastRun['errors'], true) ?: []) : [];
@@ -260,7 +298,7 @@ $found = count(array_filter($results, fn($r) => $r['card']));
         <?php if ($minor): ?>
             <div class="status">מפגרים ביום-יומיים (רגיל — לפעמים רשת לא מפרסמת קובץ): <?= $storeList($minor) ?></div>
         <?php elseif (!$cov['warn'] && !$stale): ?>
-            <div class="status ok">✓ כל <?= $cov['total'] ?> הסניפים עודכנו היום</div>
+            <div class="status ok">✓ כל <?= $cov['total'] ?> הסניפים בתל אביב עודכנו היום</div>
         <?php endif; ?>
         <?php if ($cov['hidden']): ?>
             <details class="run-errors"><summary><?= count($cov['hidden']) ?> סניפים מוסתרים (נסגרו / לא מפרסמים) — פירוט</summary>
@@ -275,13 +313,6 @@ $found = count(array_filter($results, fn($r) => $r['card']));
                 <ul><?php foreach ($runErrors as $e): ?><li><?= htmlspecialchars($e) ?></li><?php endforeach; ?></ul></details>
         <?php endif; ?>
     <?php endif; ?>
-    <div class="update-row">
-        <button type="button" id="updBtn" class="btn-update" onclick="startJob('update')">⟳ עדכן מחירי תל אביב</button>
-        <span class="muted">יומי · כ-12 דקות</span>
-        <button type="button" id="catBtn" class="btn-update catalog" onclick="startJob('catalog')">⟳ עדכן קטלוג ארצי</button>
-        <span class="muted">שבועי · כל הסניפים בארץ, לזיהוי מוצרים</span>
-    </div>
-    <span class="muted" style="display:block;text-align:center;margin:-10px 0 16px">אפשר להמשיך לעבוד בזמן העדכון, גם לסגור את הדף.</span>
     <pre id="updLog" class="upd-log" style="display:none"></pre>
     <div id="catProgress" style="display:none">
         <div class="bar"><div id="barFill"></div></div>
@@ -289,14 +320,11 @@ $found = count(array_filter($results, fn($r) => $r['card']));
         <div class="bar-chains" id="barChains"></div>
     </div>
 
-    <?php if (!empty($lastCatalog)): ?>
-        <?php $cs = json_decode($lastCatalog['summary'], true); $t = $cs['totals']; $age = (int) floor((time() - strtotime($lastCatalog['finished'])) / 86400); ?>
+    <?php if (!empty($cs)): ?>
         <details class="catalog-sum">
-            <summary>קטלוג ארצי: <?= number_format($t['barcodes']) ?> ברקודים מ-<?= number_format($t['stores']) ?> סניפים בכל הארץ ·
-                <?= number_format($t['newBarcodes']) ?> מהם לא נמכרים בתל אביב · עודכן <?= date('d/m/Y', strtotime($lastCatalog['finished'])) ?>
-                <?= $age >= 7 ? ' — מומלץ לעדכן (פעם בשבוע)' : '' ?></summary>
+            <summary>קטלוג ארצי — פירוט לפי רשת ומחוז</summary>
             <p class="muted">מוצרים במאגר: <?= number_format($t['productsBefore']) ?> → <?= number_format($t['productsAfter']) ?> ·
-                <?= (int) $t['mb'] ?> MB · <?= round($t['seconds'] / 60) ?> דקות<?= $t['failed'] ? " · {$t['failed']} סניפים בלי קובץ" : '' ?></p>
+                <?= (int) $t['mb'] ?> MB<?= $t['failed'] ? " · {$t['failed']} סניפים בלי קובץ" : '' ?></p>
             <div class="cols">
                 <div><table>
                     <tr><th>רשת</th><th class="num">סניפים</th><th class="num">ברקודים</th><th class="num">לא בתל אביב</th></tr>
@@ -314,7 +342,7 @@ $found = count(array_filter($results, fn($r) => $r['card']));
                     <?php endforeach; ?>
                 </table></div>
             </div>
-            <p class="muted">"לא בתל אביב" — ברקודים שלא היו במאגר מחירי תל אביב: בזכותם מוצר שלא נמכר בתל אביב מקבל שם, ו-NP מקבל עבורו טווח מחירים ארצי (מסומן בצהוב).</p>
+            <p class="muted">"לא בתל אביב" — ברקודים שאין להם מחיר בסניפי תל אביב: בזכותם מוצר שלא נמכר בתל אביב מקבל שם, ו-NP מקבל עבורו טווח מחירים ארצי (מסומן בצהוב).</p>
         </details>
     <?php endif; ?>
 

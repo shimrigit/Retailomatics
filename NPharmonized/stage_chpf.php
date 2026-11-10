@@ -158,7 +158,7 @@ function sf() { echo str_pad('', 512, ' '); flush(); }
     <?php elseif ($cpd->isStale()): ?>
         <?php $cov = $cpd->coverage(); ?>
 <div class="warn-box">
-    <?php if (!$cov['newest'] || $cov['newest'] < date('Y-m-d')): ?>
+    <?php if (!$cov['newest'] || $cov['newest'] < CPDClient::today()): ?>
     <h4>⚠ מחירי CPD לא מהיום — עודכנו לאחרונה <?= htmlspecialchars($cov['newest'] ? date('d/m/Y', strtotime($cov['newest'])) : '—') ?></h4>
     <?php endif; ?>
     <?php if ($cov['warn']): ?>

@@ -42,6 +42,11 @@ class CPDClient {
         }
     }
 
+    /** Today in Israel (PHP here runs on Europe/Berlin; update.js stamps local dates). */
+    public static function today() {
+        return (new DateTime('now', new DateTimeZone('Asia/Jerusalem')))->format('Y-m-d');
+    }
+
     public function available() {
         return $this->db !== null;
     }
@@ -78,7 +83,7 @@ class CPDClient {
                 continue;
             }
             $out['total']++;
-            if (substr((string) $s['updated'], 0, 10) === date('Y-m-d')) $out['today']++;
+            if (substr((string) $s['updated'], 0, 10) === CPDClient::today()) $out['today']++;
             $days = (int) round((strtotime($out['newest']) - strtotime($s['updated'])) / 86400);
             if ($days >= 1) {
                 $row = ['chain' => $this->chainName($s['chain']), 'name' => $s['name'], 'updated' => $s['updated'], 'days' => $days];
@@ -92,7 +97,7 @@ class CPDClient {
     /** True when the data isn't from today, or some stores are CPD_WARN_DAYS+ days behind. */
     public function isStale() {
         $c = $this->coverage();
-        return !$c['newest'] || $c['newest'] < date('Y-m-d') || $c['warn'] !== [];
+        return !$c['newest'] || $c['newest'] < CPDClient::today() || $c['warn'] !== [];
     }
 
     /** The product card (products row) for a barcode, or null. */

@@ -30,7 +30,7 @@ $dn = $flash['dn'];
 $vs = $flash['vs'];
 $oldStatus = $flash['old_status'];
 $newStatus = $flash['new_status'];
-$imageUrl = 'DNdir/' . rawurlencode($dn['image_filename'] ?? '');
+$imageUrl = 'dn_image.php?f=' . rawurlencode($dn['image_filename'] ?? '');
 
 poagent_render_head('POAgent – תוצאת עיבוד תעודת המשלוח', 1700);
 ?>

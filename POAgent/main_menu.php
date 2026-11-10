@@ -27,7 +27,9 @@ poagent_render_head('POAgent – תפריט ראשי');
 <?php if ($isMobile): ?>
 <a class="btn secondary" href="m/logout.php">🚪 יציאה</a>
 <?php else: ?>
-<a class="btn secondary" href="index.php">החלף משתמש</a>
+<a class="btn secondary" href="users.php">👥 משתמשים והרשאות</a>
+<div class="row-gap"></div>
+<a class="btn secondary" href="index.php?logout=1">🚪 יציאה / החלף משתמש</a>
 <?php endif; ?>
 
 <?php poagent_render_foot(); ?>

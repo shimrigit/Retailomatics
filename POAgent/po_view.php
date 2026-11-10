@@ -63,7 +63,7 @@ poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
             <?php $vsRecordsSoFar = []; ?>
             <?php foreach ($dns as $i => $dn): ?>
                 <?php
-                    $imageUrl = 'DNdir/' . rawurlencode($dn['image_filename'] ?? '');
+                    $imageUrl = 'dn_image.php?f=' . rawurlencode($dn['image_filename'] ?? '');
                     $matchingVs = $vsByDnReference[$dn['dn_core_name'] ?? ''] ?? null;
                     if ($matchingVs !== null) {
                         $vsRecordsSoFar[] = $matchingVs;
@@ -120,7 +120,7 @@ poagent_render_head('POAgent – הזמנה ' . ($po['unique_id'] ?? ''), 2000);
                     <div style="display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start;">
                         <div style="flex:1 1 420px; min-width:0;">
                             <h4 style="margin-top:0;color:#555">📄 תעודת משלוח (DN) — טרם עובדה</h4>
-                            <?php poagent_render_zoom_panel('DNdir/' . rawurlencode($pending['image_filename']), 'תמונת תעודת משלוח (ממתינה לעיבוד)', '65vh'); ?>
+                            <?php poagent_render_zoom_panel('dn_image.php?f=' . rawurlencode($pending['image_filename']), 'תמונת תעודת משלוח (ממתינה לעיבוד)', '65vh'); ?>
                             <p class="muted row-gap">
                                 התמונה נשמרה וממתינה לעיבוד OCR על ידי צוות המשרד. לא ניתן להעלות תעודה
                                 נוספת עד שתמונה זו תעובד או תימחק.

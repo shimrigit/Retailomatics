@@ -27,6 +27,7 @@
 require_once __DIR__ . '/../../whatsapp_app/lib/WaClient.php';
 require_once __DIR__ . '/../../whatsapp_app/lib/WaSessionStore.php';
 require_once __DIR__ . '/mobile_link.php';
+require_once __DIR__ . '/../lib/UserAccess.php';
 
 const POAGENT_WA_APP_ID  = 'poagent';
 const POAGENT_WA_LOG_DIR  = __DIR__ . '/logs';
@@ -68,6 +69,28 @@ function poagent_whatsapp_handle_event(array $event): void
     $phoneNumberId = (string) ($event['business_phone_number_id'] ?? '');
     $name = poagent_whatsapp_resolve_display_name($event);
 
+    // Blocked in users.php: no login link.
+    if (poagent_access_is_blocked($from)) {
+        $sent = WaClient::text($phoneNumberId, $from, 'הגישה שלך ל-POAgent חסומה. לפרטים פנה/י למשרד.');
+        poagent_whatsapp_log(['ts' => date('c'), 'direction' => 'blocked', 'from' => $from, 'reply_sent' => $sent]);
+        return;
+    }
+
+    // A 6-digit number is a desktop login code (index.php shows it): log that
+    // computer in as this sender. Anything else gets the phone login link.
+    if (preg_match('/(?<!\d)(\d{6})(?!\d)/', (string) ($event['text'] ?? ''), $m)) {
+        $result = poagent_access_claim_code($m[1], $from, $name);
+        poagent_login_log('desktop_code', $from, "code_{$result}");
+        $reply = [
+            'ok'      => '✅ נכנסת למערכת במחשב' . ($name !== '' ? " בשם {$name}" : '') . '.',
+            'invalid' => 'הקוד לא תקף או שפג תוקפו. רענן/י את דף הכניסה במחשב ושלח/י את הקוד החדש.',
+            'limited' => 'יותר מדי ניסיונות עם קוד שגוי. נסה/י שוב בעוד כמה דקות.',
+        ][$result];
+        $sent = WaClient::text($phoneNumberId, $from, $reply);
+        poagent_whatsapp_log(['ts' => date('c'), 'direction' => 'desktop_code', 'from' => $from, 'result' => $result, 'reply_sent' => $sent]);
+        return;
+    }
+
     $link   = poagent_wa_mobile_link($from, $name);
     $ttlMin = max(1, (int) round(POAGENT_WA_LINK_TTL / 60));
     $body   = 'שלום' . ($name !== '' ? " $name" : '') . " 👋\n"
@@ -79,6 +102,7 @@ function poagent_whatsapp_handle_event(array $event): void
     // bubble entirely, behind a plain button label, instead of a raw link
     // wrapped across several lines (see the screenshot that prompted this).
     $sent = WaClient::ctaUrl($phoneNumberId, $from, $body, 'כניסה למערכת', $link, $footer);
+    if ($sent) poagent_access_note_link($from);
 
     poagent_whatsapp_log([
         'ts'         => date('c'),

@@ -2,7 +2,10 @@
 // POAgent — mobile logout. Clears the session created by m/index.php.
 require_once __DIR__ . '/../lib/ui_common.php';
 
+require_once __DIR__ . '/../lib/UserAccess.php';
+
 session_start();
+poagent_login_log('logout', (string) ($_SESSION['poagent_generator_id'] ?? ''), 'ok', ['device' => 'mobile']);
 $_SESSION = [];
 if (ini_get('session.use_cookies')) {
     $p = session_get_cookie_params();

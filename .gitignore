@@ -11,3 +11,6 @@ CHPfetch/tmp/
 NPbarcode/tmp/
 NPclassify/tmp/
 whatsapp_app/config.json
+
+# POAgent login state (lib/UserAccess.php)
+POAgent/user_access.json*

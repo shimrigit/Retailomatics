@@ -1,0 +1,3 @@
+# Runs lib/access_guard.php before every POAgent page (outside requests →
+# phone session only). See ../.htaccess.
+php_value auto_prepend_file "C:/xampp/htdocs/website/POAgent/lib/access_guard.php"

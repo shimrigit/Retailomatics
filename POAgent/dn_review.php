@@ -34,7 +34,7 @@ if ($po === null) {
 
 $items = $draft['items'];
 $blankRowCount = 3; // spare rows for an item the OCR missed entirely
-$imageUrl = 'DNdir/' . rawurlencode($draft['image_filename'] ?? '');
+$imageUrl = 'dn_image.php?f=' . rawurlencode($draft['image_filename'] ?? '');
 $rowsSum = array_sum(array_map(fn($it) => (float) $it['qty'] * (float) $it['unit_price'], $items));
 
 poagent_render_head('POAgent – בדיקת תעודת משלוח', 1700);

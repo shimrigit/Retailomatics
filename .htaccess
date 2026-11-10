@@ -1,0 +1,12 @@
+# Access lock. The site is reachable from outside through the ngrok tunnel
+# (and, in POAgent's LAN mode, from phones on the local network). Requests
+# from outside are refused, except:
+#   whatsapp_app/webhook.php   Meta's webhook
+#   POAgent/*.php, POAgent/m/  the phone flow — POAgent/lib/access_guard.php
+#                              then lets in only a phone session (m/ link login)
+# ngrok forwards from localhost, so "outside" is: an X-Forwarded-For header,
+# or a non-local address. On this computer everything works as before.
+
+<If "(-n req('X-Forwarded-For') || !(-R '127.0.0.1' || -R '::1')) && !(%{REQUEST_URI} =~ m#^/website/(whatsapp_app/webhook\.php|POAgent/[A-Za-z0-9_]+\.php|POAgent/m/(index\.php|logout\.php)?)$#)">
+    Require all denied
+</If>

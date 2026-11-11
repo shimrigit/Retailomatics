@@ -104,8 +104,9 @@ wa_test_section('Method per user (users.php) and the bot');
 poagent_access_set_wa_mode(WA_TEST_FROM, 'a');
 wa_check(poagent_access_wa_mode(WA_TEST_FROM) === 'a', 'method A saved for the phone');
 $sent = wa_test_send('היי');
-wa_check(count($sent) === 1 && str_contains(wa_test_text($sent[0]), 'שיטה A') && ($sent[0]['interactive']['type'] ?? '') !== 'cta_url',
-    'method A: no login link (A not built yet → says so)', wa_test_text($sent[0] ?? []));
+wa_check(count($sent) === 1 && str_contains(wa_test_text($sent[0]), 'איזה ספק') && ($sent[0]['interactive']['type'] ?? '') !== 'cta_url',
+    'method A: "hi" starts an order, no login link', wa_test_text($sent[0] ?? []));
+WaSessionStore::clear(WA_TEST_FROM);
 $sent = wa_test_send('אתר');
 wa_check(($sent[0]['interactive']['type'] ?? '') === 'cta_url', '"אתר" still sends the login link');
 $sent = wa_test_send('תרחיש s2');
@@ -147,5 +148,129 @@ WaSessionStore::patchData(WA_TEST_FROM, ['reminder_sent_at' => date('c', time() 
 poagent_whatsapp_sweep_idle_sessions();
 $log = poagent_bench_read_log();
 wa_check(wa_test_session() === null && end($log)['outcome'] === 'abandoned', 'after 15: closed, logged as abandoned');
+
+// ─────────────────────────────────────────────────────────────────────────────
+wa_test_section('Method A — chat search + order again');
+poagent_access_set_wa_mode(WA_TEST_FROM, 'a');
+WaSessionStore::clear(WA_TEST_FROM);
+$all = [];   // every reply, for the limits check at the end
+$say = function ($msg) use (&$all) { $r = wa_test_send($msg); $all = array_merge($all, $r); return $r; };
+$tap = fn(string $id, string $kind = 'list_reply') => $say(wa_test_tap($id, '', $kind));
+$btn = fn(string $id) => $tap($id, 'button_reply');
+$state = fn() => wa_test_session()['state'] ?? null;
+$cart = fn() => wa_test_session()['data']['cart'] ?? [];
+$lastLog = function () { $l = poagent_bench_read_log(); return end($l); };
+
+$long = null;
+foreach ($suppliers as $s) if (mb_strlen($s) > 24) { $long = $s; break; }
+if ($long) {
+    $say('היי');
+    $sent = $say(mb_substr($long, 0, 12));
+    wa_check(str_contains(wa_test_text($sent[0]), $long) || in_array($state(), ['a_start', 'a_build'], true),
+        "a supplier name longer than 24 ({$long}): the full name is in the row description");
+    WaSessionStore::clear(WA_TEST_FROM);
+}
+$sent = $say('תרחיש S1');
+$sent = $say('היי');
+$rowIds = array_column($sent[0]['interactive']['action']['sections'][0]['rows'] ?? [], 'id');
+wa_check(($sent[0]['interactive']['type'] ?? '') === 'list' && in_array('sup:0', $rowIds, true), '"hi" → "which supplier?" with my recent suppliers to tap');
+$sent = $say('zzqqxx');
+wa_check(str_contains(wa_test_text($sent[0]), 'לא נמצא ספק') && $state() === 'a_supplier', 'a supplier search with 0 results → says so, asks again');
+$many = CatalogIndex::searchSuppliers('א');
+$sent = $say('א');
+$rows = $sent[0]['interactive']['action']['sections'][0]['rows'] ?? [];
+wa_check(count($rows) === min(10, count($many)) && str_contains(wa_test_text($sent[0]), 'נמצאו ' . count($many)),
+    'many results (' . count($many) . ') → a list of the first 10, "found N"');
+$sent = $say($sup);   // exactly one supplier — and the test phone ordered from it before
+wa_check($state() === 'a_start' && str_contains(wa_test_text($sent[0]), 'הזמן שוב'), 'one result → chosen; a previous PO → [הזמן שוב] [הזמנה חדשה]');
+$btn('new');
+wa_check($state() === 'a_build', '"new order" → product search');
+$sent = $say($it[0]);   // full barcode → straight to quantity
+wa_check($state() === 'a_qty' && str_contains(wa_test_text($sent[0]), $it[1]), 'a full barcode → "how many?" for that product');
+$sent = $btn('qty:2');
+wa_check(($cart()[$it[0]] ?? 0) === 2 && str_contains(wa_test_text($sent[0]), 'נוסף'), 'tap 2 → in the cart × 2');
+$sent = $say($w[0]);
+$results = wa_test_session()['data']['results'] ?? [];
+if (count($results) >= 2) {
+    $other1 = $results[0] === $it[0] ? $results[1] : $results[0];
+    $n = array_search($other1, $results, true) + 1;
+    $sent = $say("{$n}*3");
+    wa_check(($cart()[$other1] ?? 0) === 3, "\"{$n}*3\" → result {$n}, quantity 3");
+} else {
+    $other1 = null;
+    wa_check(false, "search \"{$w[0]}\" should give several results to test 3*2");
+}
+$sent = $say('עגלה');
+wa_check($state() === 'a_cart' && count($sent[0]['interactive']['action']['sections'][0]['rows'] ?? []) === 2, '"עגלה" → the 2 lines to tap');
+$tap("cart:{$it[0]}");
+wa_check($state() === 'a_line', 'a line → [שנה כמות] [הסר] [חזרה]');
+$sent = $btn('qtychg');
+wa_check(str_contains(wa_test_text($sent[0]), 'כמות חדשה'), 'change quantity → "new quantity?"');
+$say('7');
+wa_check(($cart()[$it[0]] ?? 0) === 7, 'typed 7 → the line is now 7 (replaced, not added)');
+$say('עגלה');
+$tap("cart:{$other1}");
+$btn('remove');
+wa_check(!isset($cart()[$other1]) && count($cart()) === 1, 'remove → the line is gone');
+$sent = $say('סיום');
+$summary = wa_test_text($sent[0]);
+wa_check($state() === 'a_confirm' && str_contains($summary, $it[1]) && str_contains($summary, '7 ×'), 'סיום → summary with the line and quantity');
+wa_check(str_contains($summary, date('d/m/y', strtotime(poagent_wa_next_business_day()))), 'delivery date: next business day by default');
+$future = new DateTimeImmutable('+5 days', new DateTimeZone('Asia/Jerusalem'));
+$sent = $say($future->format('dmy'));
+wa_check(str_contains(wa_test_text($sent[0]), $future->format('d/m/y')), 'a typed date (' . $future->format('dmy') . ') changes the delivery date — not taken as a login code');
+$sent = $say('321399');
+wa_check(!str_contains(wa_test_text($sent[0] ?? []), 'הקוד לא תקף') && $state() === 'a_confirm', 'an impossible date is not a login code either');
+$sent = $btn('yes');
+$created = POStore::lastPoFor(WA_TEST_FROM, $sup);
+wa_check(str_contains(wa_test_text($sent[0]), "הזמנה {$created['unique_id']} נוצרה"), "[אשר] → \"✅ הזמנה {$created['unique_id']} נוצרה\"");
+wa_check(($created['source'] ?? '') === 'wa_a' && count($created['items']) === 1 && $created['items'][0]['qty'] === 7
+    && $created['delivery_date'] === $future->format('Y-m-d'), 'the PO: source wa_a, 1 line × 7, the chosen delivery date');
+$l = $lastLog();
+wa_check($l['outcome'] === 'created' && $l['po_id'] === $created['unique_id'] && $l['scenario'] === 'S1' && $l['edits'] === 2 && $l['lines'] === 1
+    && $l['searches'] >= 5 && $l['zero_result_searches'] === 1, 'measured: created, scenario S1, 2 edits, searches counted', json_encode($l));
+wa_check(!empty(wa_test_session()['data']['idle']), 'after the PO the conversation is parked');
+$before = count(WaClient::$captured);
+WaSessionStore::patchData(WA_TEST_FROM, ['last_inbound_at' => date('c', time() - 3600)]);
+poagent_whatsapp_sweep_idle_sessions();
+wa_check(count(WaClient::$captured) === $before, 'a parked conversation gets no "still there?"');
+
+// Order again (after a PO the conversation is parked: the next message opens a new order)
+$sent = $say('היי');
+wa_check($state() === 'a_supplier' && str_contains(wa_test_text($sent[0]), 'איזה ספק'), 'the next message after a PO opens a new order');
+$say($sup);
+$sent = $btn('again');
+wa_check($state() === 'a_confirm' && ($cart()[$it[0]] ?? 0) === 7, '"הזמן שוב" → the previous PO\'s lines, straight to the summary');
+$btn('yes');
+$again = POStore::lastPoFor(WA_TEST_FROM, $sup);
+wa_check($again['unique_id'] !== $created['unique_id'] && $again['items'][0]['qty'] === 7, 'a new PO with the same lines');
+
+// Cancel
+$say('היי');
+$say($sup);
+$btn('new');
+$say($it[0]);
+$btn('qty:1');
+$sent = $say('ביטול');
+wa_check($state() === 'a_cancel' && str_contains(wa_test_text($sent[0]), 'לבטל'), 'ביטול with a full cart → "cancel the order?"');
+$btn('cancel_no');
+wa_check($state() === 'a_build' && count($cart()) === 1, '[המשך הזמנה] → back, cart kept');
+$say('ביטול');
+$sent = $btn('cancel_yes');
+wa_check(str_contains(wa_test_text($sent[0]), 'ההזמנה בוטלה') && $state() === 'a_supplier' && $cart() === [], '[כן, לבטל] → cancelled, a new order starts');
+wa_check($lastLog()['outcome'] === 'cancelled', 'measured as cancelled');
+$sent = $say('ביטול');
+wa_check($state() === 'a_supplier' && $lastLog()['outcome'] === 'cancelled', 'ביטול with nothing chosen → just starts over (nothing logged)');
+
+// Odd input
+$say($sup);
+$btn('new');
+$say($it[0]);
+$sent = $say('0');
+wa_check(str_contains(wa_test_text($sent[0]), 'כמות בין') && $state() === 'a_qty', 'quantity 0 when adding → "a quantity between 1 and 9999"');
+$sent = $say('סיום');
+wa_check($state() === 'a_build' && str_contains(wa_test_text($sent[0]), 'העגלה ריקה'), 'סיום with an empty cart → "the cart is empty"');
+wa_check_limits($all, 'method A');
+wa_check(count($all) > 30, 'every one of the ' . count($all) . ' method-A replies within WhatsApp\'s limits');
 
 wa_test_done();

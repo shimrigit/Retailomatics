@@ -1635,4 +1635,26 @@ desktop login code; `כניסה 123456` (what the QR code types) always is.
 **Verified:** `tests/wa_tests.php` 51/51 (today's behaviour unchanged, signature, search, PO path,
 method switching, log, idle close); no real data touched (counter, sessions, access file, logs);
 `users.php` and `bench_report.php` render; webhook answers 200 (unverified) through Apache.
-**Next:** phase 2 — method A (`whatsapp/bench_a_chat.php`, from the parked `po_flow.php`).
+**Then:** the App Secret was added (Nov 11) — forged / unsigned webhook requests now get 403; a real
+message from the phone was verified and answered.
+
+### Phase 2 — method A: chat search + "order again" (Nov 11, 2026)
+`whatsapp/bench_a_chat.php` (new; `po_flow.php` left as it was). States `a_supplier` → `a_start`
+(previous PO: [הזמן שוב] / [הזמנה חדשה]) → `a_build` (type a name or barcode → list of up to 10 to
+tap; one result → straight to quantity; `3*2` = result 3 × 2) → `a_qty` ([1][2][5] or typed, up to
+9999) → `a_cart` / `a_line` ([שנה כמות] replaces, 0 removes; [הסר]) → `a_confirm` (summary as text +
+[אשר][ערוך][בטל]; a typed date such as `161126` changes the delivery date) → PO via
+`poagent_wa_commit_cart()` (source `wa_a`). `ביטול`/`תפריט` with something chosen asks first
+(`a_cancel`). After a PO or a cancel the conversation is parked (`idle`: only the scenario kept, 12 h,
+the idle sweep skips it); the next message — whatever it says — opens a new order with "which
+supplier?" (recent suppliers as a list). Row ids `sup:<i>` / `item:<barcode>` / `cart:<barcode>`.
+- **Found by the tests:** treating the first message as a supplier search made "היי" pick a supplier
+  whose name contains "הייב" — dropped. `POStore::listPOs()` now breaks a same-second tie by PO number
+  (two POs in one second made "last PO" random).
+- In every `a_*` state a bare 6-digit message is input (a barcode, a date), not a desktop login code.
+
+**Verified:** `tests/wa_tests.php` 85/85 — supplier search 0 / 1 / many (41 → first 10), a name longer
+than 24, barcode → quantity, `2*3`, cart edit and remove, delivery date change, PO contents and
+source, the measurement line (scenario, edits, searches, zero results), order again, cancel and
+continue, cancel with nothing chosen, quantity 0, empty cart; all 46 replies within WhatsApp's
+limits; no real data touched. **Not yet tried on a real phone.**

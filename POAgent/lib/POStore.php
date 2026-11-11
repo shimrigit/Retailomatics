@@ -134,8 +134,9 @@ class POStore
             }
         }
 
-        // Newest first for the history/status view.
-        usort($records, fn($a, $b) => strcmp($b['date_generated'] ?? '', $a['date_generated'] ?? ''));
+        // Newest first for the history/status view (two in the same second: the higher PO number).
+        usort($records, fn($a, $b) => strcmp($b['date_generated'] ?? '', $a['date_generated'] ?? '')
+            ?: strcmp($b['unique_id'] ?? '', $a['unique_id'] ?? ''));
         return $records;
     }
 

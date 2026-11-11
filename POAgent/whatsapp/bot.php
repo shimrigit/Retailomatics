@@ -185,8 +185,8 @@ function poagent_whatsapp_sweep_idle_sessions(): array
         $lastInboundAt  = (string) ($data['last_inbound_at'] ?? $session['updated_at'] ?? '');
         $reminderSentAt = $data['reminder_sent_at'] ?? null;
 
-        if ($waId === '' || $lastInboundAt === '') {
-            continue;
+        if ($waId === '' || $lastInboundAt === '' || !empty($data['idle'])) {
+            continue;   // idle = a benchmark conversation parked between orders
         }
         $bench = $data['bench'] ?? null;
         [$remindAfter, $closeAfter] = $bench

@@ -29,6 +29,7 @@ require_once __DIR__ . '/../lib/POStore.php';
 const POAGENT_BENCH_IDLE_REMINDER_AFTER_SECONDS = 600;   // 10 minutes
 const POAGENT_BENCH_IDLE_CLOSE_AFTER_SECONDS    = 300;   // +5 minutes after the reminder → 15
 const POAGENT_BENCH_SESSION_TTL                 = 3600;
+const POAGENT_BENCH_IDLE_SESSION_TTL            = 43200;  // a parked conversation (between orders) keeps its scenario 12 hours
 
 foreach (glob(__DIR__ . '/bench_[abc]_*.php') ?: [] as $methodFile) require_once $methodFile;
 
@@ -45,10 +46,10 @@ function poagent_bench_handle(array $event, string $mode, string $name): void
     if (preg_match('/^תרחיש\s*(S\d+)$/iu', $text, $m)) {
         $scenario = strtoupper($m[1]);
         $session = WaSessionStore::get($from);
-        $data = ($session['data'] ?? []) + ['business_phone_number_id' => $pnid];
+        $data = $session['data'] ?? [];
         $data['scenario'] = $scenario;
         if (isset($data['bench'])) $data['bench']['scenario'] = $scenario;
-        WaSessionStore::set($from, POAGENT_WA_APP_ID, (string) ($session['state'] ?? ''), $data, POAGENT_BENCH_SESSION_TTL);
+        poagent_bench_save($from, (string) ($session['state'] ?? ''), $data, $pnid, !isset($data['bench']));
         WaClient::text($pnid, $from, "תרחיש {$scenario} נרשם — יופיע בדוח המדידה עם ההזמנה הבאה.");
         return;
     }
@@ -62,9 +63,35 @@ function poagent_bench_handle(array $event, string $mode, string $name): void
     $fn($event, $name);
 }
 
+/**
+ * Saves the conversation. Active ($idle false): the idle sweep's clock restarts
+ * (bot.php). Parked ($idle true, between orders): only the scenario is kept,
+ * and the sweep leaves it alone — no "are you still there" after an order.
+ */
+function poagent_bench_save(string $from, string $state, array $data, string $pnid, bool $idle = false): void
+{
+    $data['business_phone_number_id'] = $pnid;
+    $data['reminder_sent_at'] = null;
+    if ($idle) {
+        $data = array_intersect_key($data, array_flip(['business_phone_number_id', 'scenario', 'reminder_sent_at']));
+        $data['idle'] = true;
+    } else {
+        $data['last_inbound_at'] = date('c');
+        unset($data['idle']);
+    }
+    WaSessionStore::set($from, POAGENT_WA_APP_ID, $state, $data, $idle ? POAGENT_BENCH_IDLE_SESSION_TTL : POAGENT_BENCH_SESSION_TTL);
+}
+
+/** "12.90 ₪" */
+function poagent_bench_ils(int $agorot): string
+{
+    return number_format($agorot / 100, 2) . ' ₪';
+}
+
 // Conversation states in which the user types numbers (a barcode, a quantity, a search) —
 // a 6-digit message there is not a desktop login code (bot.php).
-const POAGENT_BENCH_DIGIT_STATES = ['a_build', 'a_qty', 'a_supplier', 'c_supplier', 'c_browse'];
+// (a_confirm: a delivery date like 151126 is 6 digits too.)
+const POAGENT_BENCH_DIGIT_STATES = ['a_supplier', 'a_start', 'a_build', 'a_qty', 'a_cart', 'a_line', 'a_confirm', 'c_supplier', 'c_browse'];
 
 function poagent_bench_takes_digits(?array $session): bool
 {

@@ -1658,3 +1658,8 @@ than 24, barcode → quantity, `2*3`, cart edit and remove, delivery date change
 source, the measurement line (scenario, edits, searches, zero results), order again, cancel and
 continue, cancel with nothing chosen, quantity 0, empty cart; all 46 replies within WhatsApp's
 limits; no real data touched. **Not yet tried on a real phone.**
+
+**After the first phone test (Nov 11):** works. Two changes asked for: finishing is always a button,
+never a word to type — `[סיום והזמנה] [הצג עגלה]` on the product prompt once the cart has something
+and after each add; the cart list ends with a "✅ סיום והזמנה" row (10+ lines: numbered text, then the
+button). Quantities are typed only — the [1][2][5] buttons are gone. Tests 87/87.

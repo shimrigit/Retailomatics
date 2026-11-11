@@ -183,12 +183,15 @@ wa_check(count($rows) === min(10, count($many)) && str_contains(wa_test_text($se
     'many results (' . count($many) . ') → a list of the first 10, "found N"');
 $sent = $say($sup);   // exactly one supplier — and the test phone ordered from it before
 wa_check($state() === 'a_start' && str_contains(wa_test_text($sent[0]), 'הזמן שוב'), 'one result → chosen; a previous PO → [הזמן שוב] [הזמנה חדשה]');
-$btn('new');
-wa_check($state() === 'a_build', '"new order" → product search');
+$sent = $btn('new');
+wa_check($state() === 'a_build' && ($sent[0]['type'] ?? '') === 'text', '"new order" → product search (empty cart: no finish button yet)');
 $sent = $say($it[0]);   // full barcode → straight to quantity
 wa_check($state() === 'a_qty' && str_contains(wa_test_text($sent[0]), $it[1]), 'a full barcode → "how many?" for that product');
-$sent = $btn('qty:2');
-wa_check(($cart()[$it[0]] ?? 0) === 2 && str_contains(wa_test_text($sent[0]), 'נוסף'), 'tap 2 → in the cart × 2');
+wa_check(($sent[0]['type'] ?? '') === 'text' && str_contains(wa_test_text($sent[0]), 'כתבו מספר'), 'the quantity is typed — no 1/2/5 buttons');
+$sent = $say('2');
+wa_check(($cart()[$it[0]] ?? 0) === 2 && str_contains(wa_test_text($sent[0]), 'נוסף'), 'typed 2 → in the cart × 2');
+$ids = array_column(array_column($sent[0]['interactive']['action']['buttons'] ?? [], 'reply'), 'id');
+wa_check($ids === ['done', 'cart'], 'after adding: [סיום והזמנה] [הצג עגלה] buttons');
 $sent = $say($w[0]);
 $results = wa_test_session()['data']['results'] ?? [];
 if (count($results) >= 2) {
@@ -200,21 +203,23 @@ if (count($results) >= 2) {
     $other1 = null;
     wa_check(false, "search \"{$w[0]}\" should give several results to test 3*2");
 }
-$sent = $say('עגלה');
-wa_check($state() === 'a_cart' && count($sent[0]['interactive']['action']['sections'][0]['rows'] ?? []) === 2, '"עגלה" → the 2 lines to tap');
+$sent = $btn('cart');
+$rowIds = array_column($sent[0]['interactive']['action']['sections'][0]['rows'] ?? [], 'id');
+wa_check($state() === 'a_cart' && count($rowIds) === 3 && end($rowIds) === 'done', '[הצג עגלה] → the 2 lines to tap + a "סיום והזמנה" row');
 $tap("cart:{$it[0]}");
 wa_check($state() === 'a_line', 'a line → [שנה כמות] [הסר] [חזרה]');
 $sent = $btn('qtychg');
-wa_check(str_contains(wa_test_text($sent[0]), 'כמות חדשה'), 'change quantity → "new quantity?"');
+wa_check(str_contains(wa_test_text($sent[0]), 'הכמות החדשה') && ($sent[0]['type'] ?? '') === 'text', 'change quantity → "type the new quantity" (typed, no buttons)');
 $say('7');
 wa_check(($cart()[$it[0]] ?? 0) === 7, 'typed 7 → the line is now 7 (replaced, not added)');
 $say('עגלה');
 $tap("cart:{$other1}");
 $btn('remove');
 wa_check(!isset($cart()[$other1]) && count($cart()) === 1, 'remove → the line is gone');
-$sent = $say('סיום');
+$say('עגלה');
+$sent = $tap('done');
 $summary = wa_test_text($sent[0]);
-wa_check($state() === 'a_confirm' && str_contains($summary, $it[1]) && str_contains($summary, '7 ×'), 'סיום → summary with the line and quantity');
+wa_check($state() === 'a_confirm' && str_contains($summary, $it[1]) && str_contains($summary, '7 ×'), 'the cart\'s "סיום והזמנה" row → summary with the line and quantity');
 wa_check(str_contains($summary, date('d/m/y', strtotime(poagent_wa_next_business_day()))), 'delivery date: next business day by default');
 $future = new DateTimeImmutable('+5 days', new DateTimeZone('Asia/Jerusalem'));
 $sent = $say($future->format('dmy'));
@@ -250,7 +255,7 @@ $say('היי');
 $say($sup);
 $btn('new');
 $say($it[0]);
-$btn('qty:1');
+$say('1');
 $sent = $say('ביטול');
 wa_check($state() === 'a_cancel' && str_contains(wa_test_text($sent[0]), 'לבטל'), 'ביטול with a full cart → "cancel the order?"');
 $btn('cancel_no');

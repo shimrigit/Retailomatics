@@ -36,10 +36,12 @@ switch ($argv[1] ?? '') {
         break;
     case 'status':
         [$code, $r] = graph('GET', "$pnid/whatsapp_business_encryption");
-        $mine = trim(FlowCrypto::keys()[1]);
+        $reg = $r['data'][0] ?? $r;   // Meta answers {"data": [{business_public_key, business_public_key_signature_status}]}
+        $norm = fn($pem) => preg_replace('/\s+/', '', (string) $pem);   // Meta's copy has \r line ends
         echo "HTTP $code\n";
-        echo 'signature status: ', $r['business_public_key_signature_status'] ?? '-', "\n";
-        echo 'registered key is ours: ', isset($r['business_public_key']) ? (trim($r['business_public_key']) === $mine ? 'yes' : 'NO (another key)') : 'none registered', "\n";
+        echo 'signature status: ', $reg['business_public_key_signature_status'] ?? '-', "\n";
+        echo 'registered key is ours: ', isset($reg['business_public_key'])
+            ? ($norm($reg['business_public_key']) === $norm(FlowCrypto::keys()[1]) ? 'yes' : 'NO (another key)') : 'none registered', "\n";
         if (isset($r['error'])) echo 'error: ', $r['error']['message'] ?? json_encode($r['error']), "\n";
         break;
     case 'register':

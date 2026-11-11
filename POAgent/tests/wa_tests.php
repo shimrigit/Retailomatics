@@ -205,7 +205,9 @@ if (count($results) >= 2) {
 }
 $sent = $btn('cart');
 $rowIds = array_column($sent[0]['interactive']['action']['sections'][0]['rows'] ?? [], 'id');
-wa_check($state() === 'a_cart' && count($rowIds) === 3 && end($rowIds) === 'done', '[הצג עגלה] → the 2 lines to tap + a "סיום והזמנה" row');
+$doneIds = array_column(array_column($sent[1]['interactive']['action']['buttons'] ?? [], 'reply'), 'id');
+wa_check($state() === 'a_cart' && count($rowIds) === 2 && !in_array('done', $rowIds, true), '[הצג עגלה] → the 2 lines to tap');
+wa_check(count($sent) === 2 && $doneIds === ['done'], '…and right after it, a message with the [סיום והזמנה] button');
 $tap("cart:{$it[0]}");
 wa_check($state() === 'a_line', 'a line → [שנה כמות] [הסר] [חזרה]');
 $sent = $btn('qtychg');
@@ -217,9 +219,9 @@ $tap("cart:{$other1}");
 $btn('remove');
 wa_check(!isset($cart()[$other1]) && count($cart()) === 1, 'remove → the line is gone');
 $say('עגלה');
-$sent = $tap('done');
+$sent = $btn('done');
 $summary = wa_test_text($sent[0]);
-wa_check($state() === 'a_confirm' && str_contains($summary, $it[1]) && str_contains($summary, '7 ×'), 'the cart\'s "סיום והזמנה" row → summary with the line and quantity');
+wa_check($state() === 'a_confirm' && str_contains($summary, $it[1]) && str_contains($summary, '7 ×'), 'the cart\'s [סיום והזמנה] → summary with the line and quantity');
 wa_check(str_contains($summary, date('d/m/y', strtotime(poagent_wa_next_business_day()))), 'delivery date: next business day by default');
 $future = new DateTimeImmutable('+5 days', new DateTimeZone('Asia/Jerusalem'));
 $sent = $say($future->format('dmy'));

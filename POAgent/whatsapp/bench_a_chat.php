@@ -14,7 +14,7 @@
  *               once the cart has something: [סיום והזמנה] → a_confirm, [הצג עגלה] → a_cart
  *               (finishing is always a button; the typed words סיום / עגלה still work)
  *   a_qty       "how many?" — a typed number, no preset buttons → added (or replaced, when editing a line)
- *   a_cart      the cart's lines to tap + a "סיום והזמנה" row (10+ lines: numbered text + the button) → a_line
+ *   a_cart      the cart's lines to tap (11+: numbered text), then a separate [סיום והזמנה] message → a_line
  *   a_line      [שנה כמות] [הסר] [חזרה]
  *   a_confirm   summary + delivery date (a typed date like 151126 changes it) — [אשר] [ערוך] [בטל]
  *   a_cancel    "cancel the order?" — asked when ביטול / תפריט comes with something in the cart
@@ -348,16 +348,18 @@ function poagent_bench_a_show_cart(array $ctx, array $data): void
     }
     $data['cart_order'] = array_column($lines, 'barcode');
     $head = '🛒 העגלה — ' . count($lines) . ' שורות · ' . poagent_bench_ils($total);
-    // Up to 9 lines: a list, its last row "סיום והזמנה". More: numbered text, then the button.
-    if (count($lines) < POAGENT_BENCH_A_LIST_MAX) {
+    // The lines (a list to tap; 11+: numbered text), then a separate message with the
+    // [סיום והזמנה] button — a list message can't carry other buttons, and this way
+    // finishing is on screen without opening the list.
+    if (count($lines) <= POAGENT_BENCH_A_LIST_MAX) {
         $rows = [];
         foreach ($lines as $l) {
             $rows[] = ['id' => "cart:{$l['barcode']}", 'title' => $l['name'],
                 'description' => "{$l['qty']} × " . poagent_bench_ils($l['price_agorot']) . ' = ' . poagent_bench_ils($l['qty'] * $l['price_agorot']) . " · {$l['name']}"];
         }
-        $rows[] = ['id' => 'done', 'title' => '✅ סיום והזמנה', 'description' => 'לסיכום ההזמנה ולאישור'];
-        WaClient::list($ctx['pnid'], $ctx['from'], "{$head}\nבחרו שורה כדי לשנות כמות או להסיר, או סיום והזמנה.\nלהוספה: כתבו שם מוצר.",
-            $rows, 'העגלה');
+        WaClient::list($ctx['pnid'], $ctx['from'], "{$head}\nלשינוי כמות או הסרה: פתחו את העגלה ובחרו שורה.\nלהוספה: כתבו שם מוצר.",
+            $rows, 'שורות העגלה');
+        WaClient::buttons($ctx['pnid'], $ctx['from'], 'סיימתם?', [['id' => 'done', 'title' => 'סיום והזמנה']]);
     } else {
         $txt = [$head, ''];
         foreach ($lines as $i => $l) {
@@ -366,7 +368,7 @@ function poagent_bench_a_show_cart(array $ctx, array $data): void
         $txt[] = '';
         $txt[] = 'לעריכה שלחו מספר שורה · להוספה: כתבו שם מוצר';
         WaClient::text($ctx['pnid'], $ctx['from'], implode("\n", $txt));
-        WaClient::buttons($ctx['pnid'], $ctx['from'], 'או:', [['id' => 'done', 'title' => 'סיום והזמנה']]);
+        WaClient::buttons($ctx['pnid'], $ctx['from'], 'סיימתם?', [['id' => 'done', 'title' => 'סיום והזמנה']]);
     }
     poagent_bench_a_save($ctx, 'a_cart', $data);
 }

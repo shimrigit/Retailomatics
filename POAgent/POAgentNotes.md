@@ -1661,5 +1661,7 @@ limits; no real data touched. **Not yet tried on a real phone.**
 
 **After the first phone test (Nov 11):** works. Two changes asked for: finishing is always a button,
 never a word to type — `[סיום והזמנה] [הצג עגלה]` on the product prompt once the cart has something
-and after each add; the cart list ends with a "✅ סיום והזמנה" row (10+ lines: numbered text, then the
-button). Quantities are typed only — the [1][2][5] buttons are gone. Tests 87/87.
+and after each add. Quantities are typed only — the [1][2][5] buttons are gone. The cart: its lines
+as a list (11+: numbered text), then a separate message with the [סיום והזמנה] button — a list
+message can carry no other button, and a "finish" row inside the list was hidden behind opening it.
+Tests 88/88.

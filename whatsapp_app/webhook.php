@@ -31,6 +31,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 //      one matching app's handler (POAgent's bot, etc.). See lib/WaRouter.php.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $body = file_get_contents('php://input');
+
+    // Only Meta's own requests (lib/WaSignature.php): a forged one could
+    // otherwise pose as an allowed phone — and the ordering benchmark creates
+    // POs from chat. Without an app_secret in config.json yet: let through, logged.
+    require_once __DIR__ . '/lib/WaSignature.php';
+    $signed = WaSignature::check($body, $_SERVER['HTTP_X_HUB_SIGNATURE_256'] ?? null);
+    if ($signed !== true) {
+        @mkdir(__DIR__ . '/logs', 0775, true);
+        @file_put_contents(__DIR__ . '/logs/webhook_' . date('Y-m-d') . '.log', json_encode([
+            'ts' => date('c'), 'event' => $signed === false ? 'rejected_bad_signature' : 'unverified_no_app_secret',
+            'ip' => $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '', 'bytes' => strlen($body),
+        ]) . "\n", FILE_APPEND | LOCK_EX);
+        if ($signed === false) {
+            http_response_code(403);
+            echo 'Bad signature';
+            exit;
+        }
+    }
+
     file_put_contents($IMAGES_DIR . '/webhook_log.txt', date('Y-m-d H:i:s') . " - " . $body . "\n\n", FILE_APPEND);
 
     // Ack Meta first, then dispatch — the webhook response must not wait on our

@@ -22,8 +22,9 @@
 require_once __DIR__ . '/WaSessionStore.php';
 require_once __DIR__ . '/WaClient.php';
 
-define('WA_REGISTRY_FILE', __DIR__ . '/../apps.json');
-define('WA_ROUTER_LOG_DIR', __DIR__ . '/../logs');
+// Tests (POAgent/tests/) point these at their own copies.
+if (!defined('WA_REGISTRY_FILE')) define('WA_REGISTRY_FILE', __DIR__ . '/../apps.json');
+if (!defined('WA_ROUTER_LOG_DIR')) define('WA_ROUTER_LOG_DIR', __DIR__ . '/../logs');
 
 class WaRouter
 {

@@ -14,7 +14,9 @@
 // session), m/index.php / select_user.php / login_poll.php (login),
 // whatsapp/bot.php (link sent, code claimed) and users.php (block / disconnect).
 
-define('POAGENT_ACCESS_FILE', __DIR__ . '/../user_access.json');
+// Tests (POAgent/tests/) define these first — their own copies.
+if (!defined('POAGENT_ACCESS_FILE')) define('POAGENT_ACCESS_FILE', __DIR__ . '/../user_access.json');
+if (!defined('POAGENT_LOG_DIR')) define('POAGENT_LOG_DIR', __DIR__ . '/../logs');
 define('POAGENT_ACTIVE_SECS', 600);            // "active now": a page view in the last 10 minutes
 define('POAGENT_MOBILE_SESSION_SECS', 86400);  // m/index.php's session lifetime
 define('POAGENT_DESKTOP_SESSION_SECS', 43200); // a desktop browser session — no fixed end; 12h idle counts as gone
@@ -32,7 +34,7 @@ define('POAGENT_REMEMBER_COOKIE', 'POAGENT_REMEMBER');
  */
 function poagent_login_log(string $kind, string $user, string $result, array $extra = []): void
 {
-    $dir = __DIR__ . '/../logs';
+    $dir = POAGENT_LOG_DIR;
     if (!is_dir($dir)) @mkdir($dir, 0775, true);
     $now = new DateTime('now', new DateTimeZone('Asia/Jerusalem'));
     $fwd = trim(explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''))[0]);
@@ -50,7 +52,7 @@ function poagent_login_log_recent(int $limit = 50, ?string $user = null, int $da
     $out = [];
     $day = new DateTime('now', new DateTimeZone('Asia/Jerusalem'));
     for ($i = 0; $i < $days && count($out) < $limit; $i++, $day->modify('-1 day')) {
-        $lines = @file(__DIR__ . '/../logs/login_' . $day->format('Y-m-d') . '.log', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+        $lines = @file(POAGENT_LOG_DIR . '/login_' . $day->format('Y-m-d') . '.log', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
         foreach (array_reverse($lines) as $line) {
             $e = json_decode($line, true);
             if (!is_array($e) || ($user !== null && (string) ($e['user'] ?? '') !== $user)) continue;
@@ -65,8 +67,27 @@ function poagent_access_read(): array
 {
     $d = json_decode((string) @file_get_contents(POAGENT_ACCESS_FILE), true);
     $d = is_array($d) ? $d : [];
-    foreach (['blocked', 'revoked', 'sessions', 'links', 'codes', 'fails', 'used', 'remember'] as $k) $d[$k] = (array) ($d[$k] ?? []);
+    foreach (['blocked', 'revoked', 'sessions', 'links', 'codes', 'fails', 'used', 'remember', 'wa_mode'] as $k) $d[$k] = (array) ($d[$k] ?? []);
     return $d;
+}
+
+// What the WhatsApp bot does for a phone (set in users.php): '' = sends the
+// login link (everyone, by default); 'a' / 'b' / 'c' = that benchmark method
+// of ordering inside WhatsApp (whatsapp/bench_common.php) — for demos.
+const POAGENT_WA_MODES = ['' => 'קישור לאתר', 'a' => 'שיטה A – שיחה', 'b' => 'שיטה B – טופס', 'c' => 'שיטה C – קטלוג'];
+
+function poagent_access_wa_mode(string $id): string
+{
+    $mode = (string) (poagent_access_read()['wa_mode'][$id] ?? '');
+    return isset(POAGENT_WA_MODES[$mode]) ? $mode : '';
+}
+
+function poagent_access_set_wa_mode(string $id, string $mode): void
+{
+    if (!isset(POAGENT_WA_MODES[$mode])) throw new InvalidArgumentException("Unknown WhatsApp mode: $mode");
+    poagent_access_update(function (&$d) use ($id, $mode) {
+        if ($mode === '') unset($d['wa_mode'][$id]); else $d['wa_mode'][$id] = $mode;
+    });
 }
 
 /** Read-modify-write under a lock; $fn gets the state by reference. */

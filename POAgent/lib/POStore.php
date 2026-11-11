@@ -5,7 +5,8 @@
 
 require_once __DIR__ . '/filename_utils.php';
 
-define('POAGENT_PODIR', __DIR__ . '/../POdir');
+// Tests (POAgent/tests/) define POAGENT_PODIR / POAGENT_COUNTER_DIR first — their own folders, never the real ones.
+if (!defined('POAGENT_PODIR')) define('POAGENT_PODIR', __DIR__ . '/../POdir');
 
 // The counter lives in its own directory, deliberately separate from
 // POdir/ — POdir/ is gitignored (generated PO records, not source), and the
@@ -16,7 +17,7 @@ define('POAGENT_PODIR', __DIR__ . '/../POdir');
 // POAgentNotes.md "what happens if the counter file gets deleted"). Worst
 // case, restore it manually: create POcounter/.po_counter containing the
 // last-used number as plain text.
-define('POAGENT_COUNTER_DIR', __DIR__ . '/../POcounter');
+if (!defined('POAGENT_COUNTER_DIR')) define('POAGENT_COUNTER_DIR', __DIR__ . '/../POcounter');
 define('POAGENT_PO_COUNTER_FILE', POAGENT_COUNTER_DIR . '/.po_counter');
 
 // Cap on the human-readable name stored alongside generator_id (mobile POs
@@ -79,7 +80,7 @@ class POStore
      * blank (desktop, or no session name to pull from) falls back to
      * generator_id itself, which is already display-friendly there.
      */
-    public static function createPO(string $generatorId, string $supplierId, array $items, ?string $generatorName = null, ?string $deliveryDate = null): array
+    public static function createPO(string $generatorId, string $supplierId, array $items, ?string $generatorName = null, ?string $deliveryDate = null, array $extra = []): array
     {
         $poId = self::nextPoId();
         $timestamp = date('dmy-His');
@@ -107,7 +108,7 @@ class POStore
             // flow, older POs): priority_create.php asks for it then.
             'delivery_date'  => $deliveryDate,
             'items'          => $items,
-        ];
+        ] + $extra;   // e.g. 'source' => 'wa_a' (WhatsApp benchmark method); never overrides the fields above
 
         $path = POAGENT_PODIR . "/{$coreName}_open.json";
         poagent_write_json_atomic($path, $record);
@@ -136,6 +137,27 @@ class POStore
         // Newest first for the history/status view.
         usort($records, fn($a, $b) => strcmp($b['date_generated'] ?? '', $a['date_generated'] ?? ''));
         return $records;
+    }
+
+    /** $generatorId's newest PO to $supplierId (any status but cancelled), or null — WhatsApp's "הזמן שוב". */
+    public static function lastPoFor(string $generatorId, string $supplierId): ?array
+    {
+        foreach (self::listPOs($generatorId) as $po) {   // newest first
+            if (($po['supplier_id'] ?? '') === $supplierId && ($po['status'] ?? '') !== 'cancelled') return $po;
+        }
+        return null;
+    }
+
+    /** The suppliers $generatorId ordered from lately, newest first, each once. */
+    public static function recentSuppliersFor(string $generatorId, int $limit = 10): array
+    {
+        $out = [];
+        foreach (self::listPOs($generatorId) as $po) {
+            $s = (string) ($po['supplier_id'] ?? '');
+            if ($s !== '' && ($po['status'] ?? '') !== 'cancelled' && !in_array($s, $out, true)) $out[] = $s;
+            if (count($out) >= $limit) break;
+        }
+        return $out;
     }
 
     /** Sum of qty * unit_price_agorot across a PO record's line items. */

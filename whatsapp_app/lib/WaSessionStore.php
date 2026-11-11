@@ -13,7 +13,7 @@
 // state="awaiting_menu_choice" so the *next* message from that user can be read
 // as the answer.
 
-define('WA_SESSION_DIR', __DIR__ . '/../wa_sessions');
+if (!defined('WA_SESSION_DIR')) define('WA_SESSION_DIR', __DIR__ . '/../wa_sessions');   // tests point it elsewhere
 define('WA_SESSION_DEFAULT_TTL', 3600); // seconds
 
 class WaSessionStore

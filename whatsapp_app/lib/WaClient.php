@@ -8,10 +8,17 @@
 
 define('WA_GRAPH_VERSION', 'v21.0');
 define('WA_CONFIG_FILE', __DIR__ . '/../config.json');
-define('WA_SEND_LOG_DIR', __DIR__ . '/../logs');
+if (!defined('WA_SEND_LOG_DIR')) define('WA_SEND_LOG_DIR', __DIR__ . '/../logs');
 
 class WaClient
 {
+    /**
+     * Dry run, for tests (POAgent/tests/): set to [] and every message is
+     * appended here — the payload exactly as it would be sent — instead of
+     * going to the Graph API. null (the default) = send for real.
+     */
+    public static ?array $captured = null;
+
     /**
      * Send a plain text message. Returns true on HTTP 200.
      * $phoneNumberId is the *business* number's id (event's
@@ -151,6 +158,10 @@ class WaClient
 
     private static function send(string $phoneNumberId, array $payload): bool
     {
+        if (self::$captured !== null) {
+            self::$captured[] = $payload;
+            return true;
+        }
         $token = self::token();
         if ($token === '' || $phoneNumberId === '') {
             self::log([

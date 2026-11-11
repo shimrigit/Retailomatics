@@ -91,7 +91,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $role    = ($_POST['role'] ?? '') === 'bou' ? 'bou' : 'fu';
         $name    = trim(preg_replace('/\s+/u', ' ', (string) ($_POST['name'] ?? '')));
 
-        if (in_array($action, ['disconnect', 'block', 'unblock', 'clear_fails'], true)) {
+        if ($action === 'wa_mode') {
+            // The WhatsApp ordering benchmark method for this phone. The open
+            // conversation is closed, so the next message starts in the new method.
+            $id = (string) ($_POST['id'] ?? '');
+            if (!preg_match('/^9725\d{8}$/', $id)) throw new RuntimeException('משתמש לא מוכר');
+            $mode = (string) ($_POST['wa_mode'] ?? '');
+            poagent_access_set_wa_mode($id, $mode);
+            require_once __DIR__ . '/whatsapp/bot.php';
+            $session = WaSessionStore::get($id);
+            if (!empty($session['data']['bench'])) poagent_bench_finish($id, $session['data']['bench'], 'abandoned');
+            WaSessionStore::clear($id);
+            $who = trim((string) ($_POST['who'] ?? '')) ?: users_id_to_phone($id);
+            $message = "וואטסאפ של {$who}: " . POAGENT_WA_MODES[$mode] . ' — מההודעה הבאה שלו';
+        } elseif (in_array($action, ['disconnect', 'block', 'unblock', 'clear_fails'], true)) {
             $id = (string) ($_POST['id'] ?? '');
             if (!in_array($id, POAGENT_USERS, true) && !preg_match('/^9725\d{8}$/', $id)) throw new RuntimeException('משתמש לא מוכר');
             $who = trim((string) ($_POST['who'] ?? '')) ?: users_id_to_phone($id);
@@ -216,7 +229,21 @@ $accessButtons = function (string $id, string $who) use ($access): string {
         . " onclick=\"return confirm('לחסום את {$who}? הוא ינותק מיד, והבוט לא ישלח לו קישור כניסה עד שתבטל את החסימה.')\">חסום</button>";
 };
 
-poagent_render_head('POAgent – משתמשים', 900);
+// What the WhatsApp bot does for this phone: the login link, or a benchmark ordering method (saved on change).
+$waModeSelect = function (string $id, string $who) use ($access): string {
+    $current = (string) ($access['wa_mode'][$id] ?? '');
+    $form = 'w_' . preg_replace('/\W/', '', $id);
+    $html = "<form id=\"{$form}\" method=\"post\"><input type=\"hidden\" name=\"action\" value=\"wa_mode\">"
+        . '<input type="hidden" name="id" value="' . htmlspecialchars($id) . '"><input type="hidden" name="who" value="' . htmlspecialchars($who) . '"></form>'
+        . "<select form=\"{$form}\" name=\"wa_mode\" onchange=\"this.form.submit()\" style=\"margin:0;padding:6px;font-size:14px"
+        . ($current !== '' ? ';background:#fff3cd' : '') . '">';
+    foreach (POAGENT_WA_MODES as $k => $label) {
+        $html .= '<option value="' . $k . '"' . ($k === $current ? ' selected' : '') . '>' . htmlspecialchars($label) . '</option>';
+    }
+    return $html . '</select>';
+};
+
+poagent_render_head('POAgent – משתמשים', 1100);
 ?>
 <h2>משתמשים</h2>
 <div class="poagent-nav"><a class="btn secondary" href="main_menu.php">← תפריט ראשי</a></div>
@@ -231,7 +258,7 @@ poagent_render_head('POAgent – משתמשים', 900);
 
 <h3>משתמשי טלפון</h3>
 <table>
-    <tr><th>שם</th><th>טלפון</th><th>תפקיד</th><th></th><th>חיבור</th><th></th></tr>
+    <tr><th>שם</th><th>טלפון</th><th>תפקיד</th><th></th><th>חיבור</th><th></th><th title="מה הבוט עושה כשהמשתמש כותב לו">וואטסאפ</th></tr>
     <?php foreach (array_keys($users) as $n => $id): $u = $users[$id]; $fid = "u{$n}"; ?>
         <tr>
                 <td><form id="<?= $fid ?>" method="post"><input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>"></form>
@@ -246,6 +273,7 @@ poagent_render_head('POAgent – משתמשים', 900);
                 </td>
                 <td><?= $statusCell($id) ?></td>
                 <td style="white-space:nowrap"><?= $accessButtons($id, $u['name'] ?: users_id_to_phone($id)) ?></td>
+                <td><?= $waModeSelect($id, $u['name'] ?: users_id_to_phone($id)) ?></td>
         </tr>
     <?php endforeach; ?>
     <tr style="background:#f6f9fc">
@@ -254,7 +282,7 @@ poagent_render_head('POAgent – משתמשים', 900);
                 style="margin:0;padding:8px;font-size:16px;direction:ltr;text-align:right" required></td>
             <td><?= $roleSelect('fu', 'uadd') ?></td>
             <td><button form="uadd" type="submit" name="action" value="add" style="display:inline-block;width:auto;padding:8px 14px;font-size:15px;margin:0;background:#2e7d32">➕ הוסף</button></td>
-            <td></td><td></td>
+            <td></td><td></td><td></td>
     </tr>
 </table>
 

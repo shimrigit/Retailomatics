@@ -1585,3 +1585,54 @@ It happened for real: PO00052 (`user1_.._291026-222413_PO00052`). Fix: the sanit
 `[A-Za-z0-9-]` (Hebrew suppliers → `x`, `ט. א שיווק חשמל 1997` → `1997`). PO00052 was repaired:
 file renamed to `user1_x_291026-222413_PO00052_open.json` and its `core_name` field updated (no
 DN/VS existed for it). Verified it opens in `po_view.php`; 0 unsafe names left in `POdir/`.
+
+## 11. WhatsApp ordering benchmark (started Nov 11, 2026)
+
+Spec: `POAgent — אפיון בנצ'מרק הזמנת רכש בוואטסאפ (3 שיטות).md` — three ways to create a PO inside
+WhatsApp (A chat search + reorder, B WhatsApp Flows, C WhatsApp catalog & cart), built side by side
+on the same number and data, to demo and measure against each other.
+
+**Who gets which method:** not chosen on the phone. `users.php` has a "וואטסאפ" column per phone:
+קישור לאתר (default — the login link, as before) / שיטה A / B / C, saved in `user_access.json`
+(`wa_mode`). Changing it closes that phone's open WhatsApp conversation, so the next message (even
+"היי") starts in the new method — e.g. switch צור's phone between demos. Field users stay on the link.
+In every method: `אתר` sends the login link, `תרחיש S1` tags the demo scenario in the measurements.
+While a method waits for typed input (a search, a quantity), a bare 6-digit message is input, not a
+desktop login code; `כניסה 123456` (what the QR code types) always is.
+
+### Phase 0 — testing without WhatsApp
+- `WaClient::$captured`: set to `[]` and every message is recorded instead of sent (null = real).
+- The storage constants (POdir, POcounter, wa_sessions, user_access.json, logs, apps.json for the
+  router) can be defined before the libraries load — `if (!defined(...))`.
+- `tests/wa_harness.php` + `tests/wa_tests.php` (`php POAgent/tests/wa_tests.php`): Meta-shaped
+  webhook payloads through `WaRouter::handle()`, from test number 972500000901 (allowed only in the
+  harness's copy of apps.json); everything written goes to a temp folder that's deleted; the PO
+  counter there starts at 90000. Checks every reply against WhatsApp's limits. Exit code 1 on failure.
+
+### Phase 1 — shared infrastructure
+- **Webhook signature** (`whatsapp_app/lib/WaSignature.php`, `webhook.php`): `X-Hub-Signature-256`
+  checked against `app_secret` in `whatsapp_app/config.json` (a string, or a list if the numbers sit in
+  more than one Meta app). Wrong / missing signature → 403. **No `app_secret` yet → let through and
+  logged as `unverified_no_app_secret`** in `whatsapp_app/logs/webhook_*.log` — add it before the
+  methods create real POs.
+- **`lib/CatalogIndex.php`**: all price lists in `cache/catalog_index.json` (gitignored), re-read per
+  supplier when its file's size/mtime changes (94 suppliers, 4,148 items: 3.5 s to build, then
+  instant; `tools/build_catalog_index.php [--all]`). `searchSuppliers()`, `searchItems()`, `item()`:
+  normalized Hebrew (quotes, geresh, dots, dashes, final letters), every word must appear, rank exact
+  > start of name > word starts > anywhere; a full barcode matches directly. < 1 ms per search.
+- **`POStore`**: `lastPoFor()`, `recentSuppliersFor()`; `createPO()` takes `$extra` (→ `source`).
+- **`whatsapp/bench_common.php`**: `poagent_bench_handle()` (dispatch by method; a method not built yet
+  says so), `poagent_wa_commit_cart()` (the one PO path: names/prices from the price list by barcode,
+  unknown barcodes skipped and reported, delivery date default = next business day, Saturday → Sunday,
+  `source` = `wa_a/b/c`), the measurement log `whatsapp/logs/bench_*.log`.
+- **`bot.php`**: phones with a method go to `poagent_bench_handle()`; `order` messages accepted; the
+  idle sweep (session_sweeper.php) gives benchmark conversations 10 min to the reminder + 5 to close
+  and logs a closed one as `abandoned`.
+- **`tools/bench_report.php`**: every attempt + averages per method × scenario (local only).
+- Correction to an early worry: `WaRouter` already passes the whole message as `raw_message`, so Flow
+  replies (`nfm_reply`) and catalog orders reach the bot; only `order` had to be allowed.
+
+**Verified:** `tests/wa_tests.php` 51/51 (today's behaviour unchanged, signature, search, PO path,
+method switching, log, idle close); no real data touched (counter, sessions, access file, logs);
+`users.php` and `bench_report.php` render; webhook answers 200 (unverified) through Apache.
+**Next:** phase 2 — method A (`whatsapp/bench_a_chat.php`, from the parked `po_flow.php`).

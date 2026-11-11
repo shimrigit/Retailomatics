@@ -22,21 +22,28 @@
  * Identity: the token — and every PO created through the link — is keyed on
  * the sender's phone number. The apps.json allowlist name is a display nick
  * only. allowlist_mode "enforced" still decides who gets a link at all.
+ *
+ * The WhatsApp ordering benchmark: a phone set in users.php to method A / B / C
+ * orders inside WhatsApp instead (bench_common.php poagent_bench_handle());
+ * everyone else gets the link as above. The idle sweep below runs for those
+ * conversations.
  */
 
 require_once __DIR__ . '/../../whatsapp_app/lib/WaClient.php';
 require_once __DIR__ . '/../../whatsapp_app/lib/WaSessionStore.php';
 require_once __DIR__ . '/mobile_link.php';
 require_once __DIR__ . '/../lib/UserAccess.php';
+require_once __DIR__ . '/bench_common.php';
 
 const POAGENT_WA_APP_ID  = 'poagent';
-const POAGENT_WA_LOG_DIR  = __DIR__ . '/logs';
+if (!defined('POAGENT_WA_LOG_DIR')) define('POAGENT_WA_LOG_DIR', __DIR__ . '/logs');   // tests point it elsewhere
 
 // Message types that count as "the user said something" → send a link.
 // Anything else (reactions, location, system, unsupported…) is logged and ignored.
-const POAGENT_WA_ACTIONABLE_TYPES = ['text', 'interactive', 'button'];
+// 'order' = a WhatsApp catalog cart (benchmark method C).
+const POAGENT_WA_ACTIONABLE_TYPES = ['text', 'interactive', 'button', 'order'];
 
-// Dormant — kept for session_sweeper.php and a possible future chat flow.
+// Idle sweep defaults; a benchmark conversation uses bench_common.php's longer ones.
 const POAGENT_WA_IDLE_REMINDER_AFTER_SECONDS = 300; // 5 minutes
 const POAGENT_WA_IDLE_CLOSE_AFTER_SECONDS    = 60;  // +1 minute after the reminder
 
@@ -77,8 +84,16 @@ function poagent_whatsapp_handle_event(array $event): void
     }
 
     // A 6-digit number is a desktop login code (index.php shows it): log that
-    // computer in as this sender. Anything else gets the phone login link.
-    if (preg_match('/(?<!\d)(\d{6})(?!\d)/', (string) ($event['text'] ?? ''), $m)) {
+    // computer in as this sender. Anything else gets the phone login link —
+    // or, for a phone set to a benchmark method, goes to that method. While a
+    // method waits for a search / quantity, digits are that, not a code
+    // (unless sent as "כניסה 123456", like the QR code does).
+    $mode = poagent_access_wa_mode($from);
+    $text = (string) ($event['text'] ?? '');
+    $isCode = $mode === '' || !poagent_bench_takes_digits($event['session'] ?? null)
+        ? preg_match('/(?<!\d)(\d{6})(?!\d)/', $text, $m)
+        : preg_match('/^\s*כניסה\s*(\d{6})\s*$/u', $text, $m);
+    if ($isCode) {
         $result = poagent_access_claim_code($m[1], $from, $name);
         poagent_login_log('desktop_code', $from, "code_{$result}");
         $reply = [
@@ -91,6 +106,16 @@ function poagent_whatsapp_handle_event(array $event): void
         return;
     }
 
+    if ($mode !== '') {
+        poagent_bench_handle($event, $mode, $name);
+        return;
+    }
+    poagent_whatsapp_send_login_link($phoneNumberId, $from, $name);
+}
+
+/** The greeting with the one-tap login link into the PO web pages. */
+function poagent_whatsapp_send_login_link(string $phoneNumberId, string $from, string $name): void
+{
     $link   = poagent_wa_mobile_link($from, $name);
     $ttlMin = max(1, (int) round(POAGENT_WA_LINK_TTL / 60));
     $body   = 'שלום' . ($name !== '' ? " $name" : '') . " 👋\n"
@@ -128,22 +153,23 @@ function poagent_whatsapp_resolve_display_name(array $event): string
     return (string) ($event['from'] ?? '');
 }
 
-/** First idle nudge - dormant; kept for session_sweeper.php / a future chat flow. */
-function poagent_whatsapp_idle_reminder_text(): string
+/** First idle nudge; $closeAfter = seconds until the close. */
+function poagent_whatsapp_idle_reminder_text(int $closeAfter = POAGENT_WA_IDLE_CLOSE_AFTER_SECONDS): string
 {
-    return 'עדיין שם/ה? אם לא נמשיך את השיחה, היא תיסגר בעוד דקה.';
+    $minutes = max(1, (int) round($closeAfter / 60));
+    return 'עדיין שם/ה? אם לא נמשיך את השיחה, היא תיסגר בעוד ' . ($minutes === 1 ? 'דקה' : "{$minutes} דקות") . '.';
 }
 
-/** Idle close message - dormant; see above. */
+/** Idle close message. */
 function poagent_whatsapp_idle_closed_text(): string
 {
     return 'השיחה הסתיימה. כדי להתחיל שיחה חדשה, פשוט שלח/י לנו הודעה.';
 }
 
 /**
- * Idle-timeout sweep. Dormant while the bot only sends stateless links (it
- * writes no sessions, so there is nothing for this to find), but kept intact
- * so session_sweeper.php still runs and a future chat flow can rely on it.
+ * Idle-timeout sweep (session_sweeper.php). The link itself writes no session;
+ * the benchmark conversations do — they get longer times (bench_common.php),
+ * and one closed half-way is logged as an abandoned attempt.
  *
  * @return array{reminders_sent:int, sessions_closed:int}
  */
@@ -162,11 +188,16 @@ function poagent_whatsapp_sweep_idle_sessions(): array
         if ($waId === '' || $lastInboundAt === '') {
             continue;
         }
+        $bench = $data['bench'] ?? null;
+        [$remindAfter, $closeAfter] = $bench
+            ? [POAGENT_BENCH_IDLE_REMINDER_AFTER_SECONDS, POAGENT_BENCH_IDLE_CLOSE_AFTER_SECONDS]
+            : [POAGENT_WA_IDLE_REMINDER_AFTER_SECONDS, POAGENT_WA_IDLE_CLOSE_AFTER_SECONDS];
 
         if ($reminderSentAt) {
             $idleSinceReminder = time() - strtotime((string) $reminderSentAt);
-            if ($idleSinceReminder >= POAGENT_WA_IDLE_CLOSE_AFTER_SECONDS) {
+            if ($idleSinceReminder >= $closeAfter) {
                 $sent = WaClient::text($phoneNumberId, $waId, poagent_whatsapp_idle_closed_text());
+                if ($bench) poagent_bench_finish($waId, $bench, 'abandoned');
                 WaSessionStore::clear($waId);
                 $sessionsClosed++;
                 poagent_whatsapp_log([
@@ -177,8 +208,8 @@ function poagent_whatsapp_sweep_idle_sessions(): array
         }
 
         $idleSinceInbound = time() - strtotime($lastInboundAt);
-        if ($idleSinceInbound >= POAGENT_WA_IDLE_REMINDER_AFTER_SECONDS) {
-            $sent = WaClient::text($phoneNumberId, $waId, poagent_whatsapp_idle_reminder_text());
+        if ($idleSinceInbound >= $remindAfter) {
+            $sent = WaClient::text($phoneNumberId, $waId, poagent_whatsapp_idle_reminder_text($closeAfter));
             WaSessionStore::patchData($waId, ['reminder_sent_at' => date('c')]);
             $remindersSent++;
             poagent_whatsapp_log([

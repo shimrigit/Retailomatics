@@ -44,12 +44,15 @@ Rules:
 PROMPT;
 
     /**
-     * Send one DN photo to the vision model in a single call — no crop
+     * Send the DN photo to the vision model in a single call — no crop
      * marking, no per-region calls. Returns the decoded JSON per
      * SYSTEM_PROMPT's shape (keys always present, defensively normalized).
+     * $imagePaths: one photo, or the pages of one DN in order (DNStore::pagePaths()) —
+     * all of them in the same call, read as one document.
      */
-    public static function extract(string $imagePath): array
+    public static function extract(string|array $imagePaths): array
     {
+        $imagePaths = array_values((array) $imagePaths);
         $configFile = __DIR__ . '/../../AIocr/config.json';
         if (!file_exists($configFile)) {
             throw new RuntimeException('AIocr/config.json not found');
@@ -60,22 +63,26 @@ PROMPT;
             throw new RuntimeException('openai_api_key missing in AIocr/config.json');
         }
 
-        $imageData = file_get_contents($imagePath);
-        if ($imageData === false) {
-            throw new RuntimeException("Cannot read DN image: $imagePath");
+        $content = [['type' => 'text', 'text' => count($imagePaths) === 1
+            ? 'Extract the delivery note data from this image:'
+            : 'These ' . count($imagePaths) . ' images are the pages of ONE delivery note, in order. '
+              . 'Extract its data as one document: the header from wherever it appears, ALL pages\' item rows '
+              . 'in one "items" list (page 1 first), and the printed grand total (usually on the last page):']];
+        foreach ($imagePaths as $imagePath) {
+            $imageData = file_get_contents($imagePath);
+            if ($imageData === false) {
+                throw new RuntimeException("Cannot read DN image: $imagePath");
+            }
+            $ext = strtolower(pathinfo($imagePath, PATHINFO_EXTENSION));
+            $mime = $ext === 'png' ? 'image/png' : 'image/jpeg';
+            $content[] = ['type' => 'image_url', 'image_url' => ['url' => "data:{$mime};base64," . base64_encode($imageData)]];
         }
-        $ext = strtolower(pathinfo($imagePath, PATHINFO_EXTENSION));
-        $mime = $ext === 'png' ? 'image/png' : 'image/jpeg';
-        $base64 = base64_encode($imageData);
 
         $payload = [
             'model' => self::MODEL,
             'messages' => [
                 ['role' => 'system', 'content' => self::SYSTEM_PROMPT],
-                ['role' => 'user', 'content' => [
-                    ['type' => 'text', 'text' => 'Extract the delivery note data from this image:'],
-                    ['type' => 'image_url', 'image_url' => ['url' => "data:{$mime};base64,{$base64}"]],
-                ]],
+                ['role' => 'user', 'content' => $content],
             ],
             'max_tokens' => 4000,
             'temperature' => 0.0,

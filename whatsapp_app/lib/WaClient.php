@@ -201,6 +201,42 @@ class WaClient
         ]);
     }
 
+    /** Dry run only: the "media" a test sends, media id => ['bytes' => ..., 'mime' => ...]. */
+    public static array $fakeMedia = [];
+
+    /**
+     * Downloads a media file a user sent (an image / document message's id):
+     * ['bytes' => ..., 'mime' => 'image/jpeg'] or null. Two Graph calls — the
+     * id → a short-lived URL, then the URL itself, both with the token.
+     */
+    public static function downloadMedia(string $mediaId): ?array
+    {
+        if (self::$captured !== null) {
+            return self::$fakeMedia[$mediaId] ?? null;
+        }
+        $get = function (string $url): array {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30, CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . self::token()]]);
+            $body = curl_exec($ch);
+            $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            return [$status, is_string($body) ? $body : ''];
+        };
+        [$status, $meta] = $get('https://graph.facebook.com/' . WA_GRAPH_VERSION . '/' . rawurlencode($mediaId));
+        $info = json_decode($meta, true);
+        if ($status !== 200 || empty($info['url'])) {
+            self::log(['ts' => date('c'), 'event' => 'media_lookup_failed', 'media_id' => $mediaId, 'status' => $status, 'response' => mb_substr($meta, 0, 400)]);
+            return null;
+        }
+        [$status, $bytes] = $get($info['url']);
+        if ($status !== 200 || $bytes === '') {
+            self::log(['ts' => date('c'), 'event' => 'media_download_failed', 'media_id' => $mediaId, 'status' => $status]);
+            return null;
+        }
+        return ['bytes' => $bytes, 'mime' => (string) ($info['mime_type'] ?? '')];
+    }
+
     // ── internals ───────────────────────────────────────────────────────────
 
     private static function send(string $phoneNumberId, array $payload): bool

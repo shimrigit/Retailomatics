@@ -30,7 +30,6 @@ $dn = $flash['dn'];
 $vs = $flash['vs'];
 $oldStatus = $flash['old_status'];
 $newStatus = $flash['new_status'];
-$imageUrl = 'dn_image.php?f=' . rawurlencode($dn['image_filename'] ?? '');
 
 poagent_render_head('POAgent – תוצאת עיבוד תעודת המשלוח', 1700);
 ?>
@@ -40,7 +39,7 @@ poagent_render_head('POAgent – תוצאת עיבוד תעודת המשלוח',
 <div class="poagent-sticky-layout">
 
     <div class="poagent-sticky-panel" style="flex:1 1 480px;">
-        <?php poagent_render_zoom_panel($imageUrl, 'תמונת תעודת משלוח', '85vh'); ?>
+        <?php poagent_render_dn_pages($dn['image_filename'] ?? '', 'תמונת תעודת משלוח', '85vh'); ?>
     </div>
 
     <div class="poagent-sticky-fill" style="flex:1 1 560px;">

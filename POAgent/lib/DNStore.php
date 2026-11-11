@@ -4,13 +4,70 @@
 // into DNdir/, named per spec §6.3. OCR extraction (DNOcr, Stage 2) and
 // writing the finalized DN JSON record (finalize(), Stage 3) land later.
 
+// A delivery note of several pages (sent from WhatsApp, whatsapp/dn_chat.php):
+// page 1 is "<dn_core_name>.<ext>" as always, page N is "<dn_core_name>_p<N>.<ext>"
+// next to it. Everything that works with page 1 still does; pagePaths() /
+// pageFilenames() give all of them (OCR, the photo panels).
+
 require_once __DIR__ . '/filename_utils.php';
 
-define('POAGENT_DNDIR', __DIR__ . '/../DNdir');
+// Tests (POAgent/tests/) define it first — their own folder.
+if (!defined('POAGENT_DNDIR')) define('POAGENT_DNDIR', __DIR__ . '/../DNdir');
 
 class DNStore
 {
     private const ALLOWED_IMAGE_EXT = ['jpg', 'jpeg', 'png'];
+
+    /** Every page of the DN whose page 1 is $firstPath, in order (page 1 first). */
+    public static function pagePaths(string $firstPath): array
+    {
+        $base = pathinfo($firstPath, PATHINFO_FILENAME);
+        $pages = [];
+        foreach (glob(dirname($firstPath) . '/' . $base . '_p*.*') ?: [] as $p) {
+            if (preg_match('/_p(\d+)\.(jpe?g|png)$/i', $p, $m) && pathinfo($p, PATHINFO_FILENAME) === "{$base}_p{$m[1]}") {
+                $pages[(int) $m[1]] = $p;
+            }
+        }
+        ksort($pages);
+        return array_merge([$firstPath], array_values($pages));
+    }
+
+    /** The same by file name (DNdir/), for the photo panels. */
+    public static function pageFilenames(string $firstFilename): array
+    {
+        return array_map('basename', self::pagePaths(POAGENT_DNDIR . '/' . basename($firstFilename)));
+    }
+
+    /**
+     * Saves a DN's pages (image bytes, in order) for a PO — page 1 under a new
+     * dn_core_name, the rest as its _p2, _p3… Same naming as the uploads, so
+     * the result is an ordinary pending DN (no JSON yet) for the office's OCR.
+     * $pages: [['bytes' => ..., 'ext' => 'jpg'|'png'], ...]
+     * Returns ['dn_core_name', 'image_path', 'image_filename', 'pages' => [paths]].
+     */
+    public static function importPages(string $poCoreName, array $pages): array
+    {
+        if (!preg_match('/^[A-Za-z0-9_-]+$/', $poCoreName)) {
+            throw new InvalidArgumentException('Invalid PO core name');
+        }
+        if (!$pages) {
+            throw new RuntimeException('no pages');
+        }
+        foreach ($pages as $p) {
+            if (!in_array($p['ext'] ?? '', self::ALLOWED_IMAGE_EXT, true)) throw new RuntimeException('סוג קובץ לא נתמך');
+        }
+        [$dnCoreName, $firstPath] = self::allocateDestPath($poCoreName, $pages[0]['ext']);
+        $paths = [];
+        foreach ($pages as $i => $p) {
+            $path = $i === 0 ? $firstPath : POAGENT_DNDIR . "/{$dnCoreName}_p" . ($i + 1) . ".{$p['ext']}";
+            if (file_put_contents($path, $p['bytes']) === false) {
+                foreach ($paths as $done) @unlink($done);
+                throw new RuntimeException('שגיאה בשמירת התמונה ל-DNdir');
+            }
+            $paths[] = $path;
+        }
+        return ['dn_core_name' => $dnCoreName, 'image_path' => $firstPath, 'image_filename' => basename($firstPath), 'pages' => $paths];
+    }
 
     /**
      * Resolve the default folder the DN folder-browser opens in: the real
@@ -226,6 +283,9 @@ class DNStore
         $pending = [];
         foreach ($matches as $path) {
             $dnCoreName = pathinfo($path, PATHINFO_FILENAME);
+            if (preg_match('/_p\d+$/', $dnCoreName)) {
+                continue;   // page 2+ of a DN, not a DN of its own
+            }
             if (!is_file(POAGENT_DNDIR . "/{$dnCoreName}.json")) {
                 $pending[] = ['dn_core_name' => $dnCoreName, 'image_path' => $path, 'image_filename' => basename($path)];
             }

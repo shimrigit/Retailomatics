@@ -59,7 +59,7 @@ if ($pending === null) {
 
 $ocrStartedAt = microtime(true);
 try {
-    $ocrRaw = DNOcr::extract($pending['image_path']);
+    $ocrRaw = DNOcr::extract(DNStore::pagePaths($pending['image_path']));
 } catch (Throwable $e) {
     http_response_code(502);
     poagent_process_ocr_json(false, ['error' => 'שלב ה-OCR נכשל: ' . $e->getMessage()]);

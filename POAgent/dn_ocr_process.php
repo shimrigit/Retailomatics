@@ -7,6 +7,7 @@
 // (fast) upload — see dn_capture.php.
 session_start();
 require_once __DIR__ . '/lib/DNOcr.php';
+require_once __DIR__ . '/lib/DNStore.php';
 require_once __DIR__ . '/lib/DNSanity.php';
 require_once __DIR__ . '/lib/NetworkMode.php';
 
@@ -54,7 +55,7 @@ if (!$pending || empty($pending['image_path']) || !is_file($pending['image_path'
 // phone's connection. See dn_capture.php's status display.
 $ocrStartedAt = microtime(true);
 try {
-    $ocrRaw = DNOcr::extract($pending['image_path']);
+    $ocrRaw = DNOcr::extract(DNStore::pagePaths($pending['image_path']));
 } catch (Throwable $e) {
     // The photo itself is already safely saved (stage 1 succeeded, and
     // $_SESSION['poagent_dn_pending'] is left in place) — only OCR failed,

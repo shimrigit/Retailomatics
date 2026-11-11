@@ -39,7 +39,9 @@ if ($po === null) {
 
 $pending = DNStore::findPendingImage($poCoreName);
 if ($pending !== null) {
-    @unlink($pending['image_path']);
+    foreach (DNStore::pagePaths($pending['image_path']) as $page) {
+        @unlink($page);   // every page of it
+    }
     $allVs = VSStore::listForPo($poCoreName);
     $newStatus = DiffEngine::statusFromHistory($po, $allVs);
     if ($newStatus !== $po['status']) {

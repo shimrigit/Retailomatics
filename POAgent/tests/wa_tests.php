@@ -104,8 +104,9 @@ wa_test_section('Method per user (users.php) and the bot');
 poagent_access_set_wa_mode(WA_TEST_FROM, 'a');
 wa_check(poagent_access_wa_mode(WA_TEST_FROM) === 'a', 'method A saved for the phone');
 $sent = wa_test_send('היי');
-wa_check(count($sent) === 1 && str_contains(wa_test_text($sent[0]), 'איזה ספק') && ($sent[0]['interactive']['type'] ?? '') !== 'cta_url',
-    'method A: "hi" starts an order, no login link', wa_test_text($sent[0] ?? []));
+$menuIds = array_column(array_column($sent[0]['interactive']['action']['buttons'] ?? [], 'reply'), 'id');
+wa_check(count($sent) === 1 && $menuIds === ['menu_po', 'menu_dn'], 'method A: "hi" → "what would you like?" [הזמנה חדשה] [תעודת משלוח], no login link',
+    wa_test_text($sent[0] ?? []));
 WaSessionStore::clear(WA_TEST_FROM);
 $sent = wa_test_send('אתר');
 wa_check(($sent[0]['interactive']['type'] ?? '') === 'cta_url', '"אתר" still sends the login link');
@@ -165,15 +166,17 @@ $long = null;
 foreach ($suppliers as $s) if (mb_strlen($s) > 24) { $long = $s; break; }
 if ($long) {
     $say('היי');
+    $btn('menu_po');
     $sent = $say(mb_substr($long, 0, 12));
     wa_check(str_contains(wa_test_text($sent[0]), $long) || in_array($state(), ['a_start', 'a_build'], true),
         "a supplier name longer than 24 ({$long}): the full name is in the row description");
     WaSessionStore::clear(WA_TEST_FROM);
 }
 $sent = $say('תרחיש S1');
-$sent = $say('היי');
+$say('היי');
+$sent = $btn('menu_po');
 $rowIds = array_column($sent[0]['interactive']['action']['sections'][0]['rows'] ?? [], 'id');
-wa_check(($sent[0]['interactive']['type'] ?? '') === 'list' && in_array('sup:0', $rowIds, true), '"hi" → "which supplier?" with my recent suppliers to tap');
+wa_check(($sent[0]['interactive']['type'] ?? '') === 'list' && in_array('sup:0', $rowIds, true), '[הזמנה חדשה] → "which supplier?" with my recent suppliers to tap');
 $sent = $say('zzqqxx');
 wa_check(str_contains(wa_test_text($sent[0]), 'לא נמצא ספק') && $state() === 'a_supplier', 'a supplier search with 0 results → says so, asks again');
 $many = CatalogIndex::searchSuppliers('א');
@@ -242,9 +245,10 @@ WaSessionStore::patchData(WA_TEST_FROM, ['last_inbound_at' => date('c', time() -
 poagent_whatsapp_sweep_idle_sessions();
 wa_check(count(WaClient::$captured) === $before, 'a parked conversation gets no "still there?"');
 
-// Order again (after a PO the conversation is parked: the next message opens a new order)
+// Order again (after a PO the conversation is parked: the next message gets the first question)
 $sent = $say('היי');
-wa_check($state() === 'a_supplier' && str_contains(wa_test_text($sent[0]), 'איזה ספק'), 'the next message after a PO opens a new order');
+wa_check($state() === 'a_menu' && str_contains(wa_test_text($sent[0]), 'מה תרצו לעשות'), 'the next message after a PO → the first question again');
+$btn('menu_po');
 $say($sup);
 $sent = $btn('again');
 wa_check($state() === 'a_confirm' && ($cart()[$it[0]] ?? 0) === 7, '"הזמן שוב" → the previous PO\'s lines, straight to the summary');
@@ -254,6 +258,7 @@ wa_check($again['unique_id'] !== $created['unique_id'] && $again['items'][0]['qt
 
 // Cancel
 $say('היי');
+$btn('menu_po');
 $say($sup);
 $btn('new');
 $say($it[0]);
@@ -279,6 +284,73 @@ $sent = $say('סיום');
 wa_check($state() === 'a_build' && str_contains(wa_test_text($sent[0]), 'העגלה ריקה'), 'סיום with an empty cart → "the cart is empty"');
 wa_check_limits($all, 'method A');
 wa_check(count($all) > 30, 'every one of the ' . count($all) . ' method-A replies within WhatsApp\'s limits');
+
+// ─────────────────────────────────────────────────────────────────────────────
+wa_test_section('Delivery note from WhatsApp (method A phones)');
+WaSessionStore::clear(WA_TEST_FROM);
+$all = [];
+$img = function (string $mediaId, string $mime = 'image/jpeg', string $kind = 'image') use ($say) {
+    WaClient::$fakeMedia[$mediaId] = ['bytes' => "fake-{$mediaId}", 'mime' => $mime];
+    return $say(['type' => $kind, $kind => ['id' => $mediaId, 'mime_type' => $mime]]);
+};
+// An open PO of another user, to see "own first".
+$othersPo = POStore::createPO('972500000999', $sup, [['barcode' => $it[0], 'name' => $it[1], 'qty' => 1, 'unit_price_agorot' => $it[2]]], 'אחר');
+$say('היי');
+$sent = $btn('menu_dn');
+$rows = $sent[0]['interactive']['action']['sections'][0]['rows'] ?? [];
+$ownPos = array_filter(POStore::listPOs(WA_TEST_FROM), fn($p) => in_array($p['status'], ['open', 'prcv'], true));
+wa_check($state() === 'd_po' && count($rows) >= 2 && str_contains($rows[0]['description'], 'שלך')
+    && str_contains(end($rows)['title'] . ' ' . wa_test_text($sent[0]), $othersPo['unique_id']),
+    '[תעודת משלוח] → "which PO?": open POs, mine first, then others\'');
+$target = POStore::loadByCoreName(wa_test_session()['data']['dn_map'][0]);
+$sent = $tap('po:0');
+wa_check($state() === 'd_pages' && str_contains(wa_test_text($sent[0]), 'צלמו'), "a PO chosen ({$target['unique_id']}) → \"photograph the delivery note\"");
+$sent = $img('m1');
+wa_check(str_contains(wa_test_text($sent[0]), 'עמוד 1 התקבל') && array_column(array_column($sent[0]['interactive']['action']['buttons'], 'reply'), 'id') === ['dn_done', 'dn_cancel'],
+    'a photo → "page 1 received" [✅ סיום] [ביטול]');
+$sent = $img('m2', 'image/png', 'document');
+wa_check(str_contains(wa_test_text($sent[0]), 'עמוד 2 התקבל'), 'a second page (sent as a PNG document) → "page 2 received"');
+$sent = $img('m3', 'application/pdf', 'document');
+wa_check(str_contains(wa_test_text($sent[0]), 'PDF') && count(wa_test_session()['data']['dn_pages']) === 2, 'a PDF → "send it as a photo", not counted');
+wa_check(DNStore::findPendingImage($target['core_name']) === null, 'nothing reaches the PO before סיום');
+$sent = $btn('dn_done');
+$pending = DNStore::findPendingImage($target['core_name']);
+wa_check(str_contains(wa_test_text($sent[0]), 'נשמרה') && str_contains(wa_test_text($sent[0]), '2 עמודים'), '[סיום] → "saved — 2 pages"');
+wa_check($pending && DNStore::pageFilenames($pending['image_filename']) === [$pending['image_filename'], $pending['dn_core_name'] . '_p2.png']
+    && file_get_contents(DNStore::pagePaths($pending['image_path'])[1]) === 'fake-m2', 'one pending DN: page 1 + its _p2, in order (page 2 not a DN of its own)');
+wa_check(POStore::loadByCoreName($target['core_name'])['status'] === 'preocr', 'the PO now waits for the office\'s OCR (preocr)');
+wa_check(glob(POAGENT_DNDIR . '/_incoming/*') === [], 'the waiting photos are cleared');
+require_once __DIR__ . '/../lib/ui_common.php';
+ob_start();
+poagent_render_dn_pages($pending['image_filename'], 'x');
+$html = ob_get_clean();
+wa_check(substr_count($html, 'poagent-zoom-panel"') === 2 && str_contains($html, 'עמוד 2 מתוך 2'), 'the site shows both pages ("עמוד 2 מתוך 2")');
+
+// A photo first, then the PO
+$sent = $img('m4');
+wa_check($state() === 'd_po' && str_contains(wa_test_text($sent[0]), 'קיבלתי את התמונה'), 'a photo with nothing in progress → kept, "which PO?"');
+$dnMap = wa_test_session()['data']['dn_map'];
+wa_check(!in_array($target['core_name'], $dnMap, true), 'a PO already waiting for OCR is not offered');
+$sent = $say((string) (int) substr($othersPo['unique_id'], 2));
+wa_check(count(wa_test_session()['data']['dn_map']) === 1, 'typing a PO number narrows the list to it');
+$sent = $tap('po:0');
+wa_check($state() === 'd_pages' && str_contains(wa_test_text($sent[0]), '1 עמוד'), 'the PO chosen → the photo already counts as page 1');
+$sent = $btn('dn_cancel');
+wa_check(str_contains(wa_test_text($sent[0]), 'בוטלה') && glob(POAGENT_DNDIR . '/_incoming/*') === [] && DNStore::findPendingImage($othersPo['core_name']) === null,
+    '[ביטול] → nothing saved, the photo deleted');
+
+// While ordering, a photo is not a delivery note
+$say('היי');
+$btn('menu_po');
+$sent = $img('m5');
+wa_check(str_contains(wa_test_text($sent[0]), 'באמצע הזמנה') && $state() === 'a_supplier', 'a photo in the middle of an order → "finish or cancel the order first"');
+$say('ביטול');
+// Users on the login link: a photo is ignored, as before
+poagent_access_set_wa_mode(WA_TEST_FROM, '');
+WaSessionStore::clear(WA_TEST_FROM);
+$sent = $img('m6');
+wa_check($sent === [], 'a phone on "קישור לאתר": a photo is ignored, as before');
+wa_check_limits($all, 'delivery notes');
 
 // ─────────────────────────────────────────────────────────────────────────────
 wa_test_section('Method B — WhatsApp Flow: encryption and the endpoint');

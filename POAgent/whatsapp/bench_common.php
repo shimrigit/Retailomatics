@@ -32,6 +32,7 @@ const POAGENT_BENCH_SESSION_TTL                 = 3600;
 const POAGENT_BENCH_IDLE_SESSION_TTL            = 43200;  // a parked conversation (between orders) keeps its scenario 12 hours
 
 foreach (glob(__DIR__ . '/bench_[abc]_*.php') ?: [] as $methodFile) require_once $methodFile;
+require_once __DIR__ . '/dn_chat.php';   // delivery notes from the chat (method A)
 
 function poagent_bench_handle(array $event, string $mode, string $name): void
 {
@@ -60,7 +61,18 @@ function poagent_bench_handle(array $event, string $mode, string $name): void
         poagent_whatsapp_log(['ts' => date('c'), 'event' => 'bench_not_built', 'from' => $from, 'mode' => $mode]);
         return;
     }
-    $fn($event, $name);
+    // One message of a phone at a time: several photos picked together arrive as
+    // separate, near-simultaneous webhooks — each reads the session, adds its page
+    // and saves; side by side, one would overwrite the other.
+    @mkdir(WA_SESSION_DIR, 0775, true);
+    $lock = fopen(WA_SESSION_DIR . '/' . preg_replace('/\D/', '', $from) . '.lock', 'c');
+    flock($lock, LOCK_EX);
+    try {
+        $fn($event, $name);
+    } finally {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
 }
 
 /**
@@ -91,7 +103,7 @@ function poagent_bench_ils(int $agorot): string
 // Conversation states in which the user types numbers (a barcode, a quantity, a search) —
 // a 6-digit message there is not a desktop login code (bot.php).
 // (a_confirm: a delivery date like 151126 is 6 digits too.)
-const POAGENT_BENCH_DIGIT_STATES = ['a_supplier', 'a_start', 'a_build', 'a_qty', 'a_cart', 'a_line', 'a_confirm', 'c_supplier', 'c_browse'];
+const POAGENT_BENCH_DIGIT_STATES = ['a_supplier', 'a_start', 'a_build', 'a_qty', 'a_cart', 'a_line', 'a_confirm', 'd_po', 'c_supplier', 'c_browse'];
 
 function poagent_bench_takes_digits(?array $session): bool
 {

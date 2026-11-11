@@ -34,7 +34,6 @@ if ($po === null) {
 
 $items = $draft['items'];
 $blankRowCount = 3; // spare rows for an item the OCR missed entirely
-$imageUrl = 'dn_image.php?f=' . rawurlencode($draft['image_filename'] ?? '');
 $rowsSum = array_sum(array_map(fn($it) => (float) $it['qty'] * (float) $it['unit_price'], $items));
 
 poagent_render_head('POAgent – בדיקת תעודת משלוח', 1700);
@@ -54,7 +53,7 @@ poagent_render_head('POAgent – בדיקת תעודת משלוח', 1700);
 <div class="poagent-sticky-layout">
 
     <div class="poagent-sticky-panel" style="flex:1 1 520px;">
-        <?php poagent_render_zoom_panel($imageUrl, 'תמונת תעודת משלוח', '85vh'); ?>
+        <?php poagent_render_dn_pages($draft['image_filename'] ?? '', 'תמונת תעודת משלוח', '85vh'); ?>
     </div>
 
     <div class="poagent-sticky-fill" style="flex:1 1 560px;">

@@ -86,7 +86,7 @@ if (poagent_is_fu($generatorId)) {
 // Steps 2–3 (BOU only) — OCR + sanity check. The image is already saved at
 // this point even if OCR fails, so nothing is lost — just re-import to retry.
 try {
-    $ocrRaw = DNOcr::extract($imported['image_path']);
+    $ocrRaw = DNOcr::extract(DNStore::pagePaths($imported['image_path']));
 } catch (Throwable $e) {
     poagent_dn_error('התמונה נשמרה, אך שלב ה-OCR נכשל: ' . $e->getMessage(), $poCoreName, $captureScreen);
 }

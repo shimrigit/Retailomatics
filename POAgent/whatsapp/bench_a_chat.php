@@ -8,6 +8,8 @@
  * (poagent_wa_commit_cart), the measurement counters.
  *
  * Conversation states (WaSessionStore state; data.cart = {barcode: qty}):
+ *   a_menu      the first question: [📦 הזמנה חדשה] [📄 תעודת משלוח] (a delivery note: dn_chat.php,
+ *               states d_*; sending a photo with nothing in progress goes there too)
  *   a_supplier  "which supplier?" — recent suppliers as a list, or type part of a name
  *   a_start     the supplier's last PO: [הזמן שוב] → a_confirm with its lines / [הזמנה חדשה] → a_build
  *   a_build     type a product name or barcode → a list of up to 10 to tap; "3*2" = result 3, quantity 2;
@@ -18,7 +20,7 @@
  *   a_line      [שנה כמות] [הסר] [חזרה]
  *   a_confirm   summary + delivery date (a typed date like 151126 changes it) — [אשר] [ערוך] [בטל]
  *   a_cancel    "cancel the order?" — asked when ביטול / תפריט comes with something in the cart
- * After a PO (or a cancel) the conversation is parked; the next message starts a new order.
+ * After a PO the conversation is parked; the next message gets the first question again.
  * List row ids: sup:<index into data.sup_map> / item:<barcode> / cart:<barcode> — never a Hebrew name.
  */
 
@@ -36,12 +38,32 @@ function poagent_bench_a_handle(array $event, string $name): void
     $text = trim((string) ($event['text'] ?? ''));
     $id = (string) ($event['reply_id'] ?? '');
 
-    // No order in progress: this message starts one.
-    if (!str_starts_with($state, 'a_') || empty($data['bench'])) {
-        // Whatever it says — even "היי" would match a supplier named "…הייב…" — it only opens the order.
-        $data = poagent_bench_a_new_order($data);
-        poagent_bench_note($data['bench'], $event);
-        poagent_bench_a_ask_supplier($ctx, $data, 'שלום' . ($name !== '' ? " {$name}" : '') . " 👋 הזמנת רכש חדשה.\n");
+    // A delivery note in progress (dn_chat.php).
+    if (str_starts_with($state, 'd_')) {
+        poagent_dn_chat_handle($ctx, $event, $data, $state);
+        return;
+    }
+    $ordering = str_starts_with($state, 'a_') && !empty($data['bench']);
+    // A photo: a delivery note — unless an order is in progress.
+    if (in_array($event['type'] ?? '', ['image', 'document'], true)) {
+        if ($ordering) {
+            WaClient::text($ctx['pnid'], $ctx['from'], "אתם באמצע הזמנה. כדי לשלוח תעודת משלוח — סיימו אותה, או כתבו *ביטול*, ואז שלחו את הצילום.");
+        } else {
+            poagent_dn_chat_start($ctx, $data, $event);
+        }
+        return;
+    }
+    // Nothing in progress: the first question — a new order or a delivery note.
+    if (!$ordering) {
+        if ($state === 'a_menu' && ($id === 'menu_po' || in_array($text, ['הזמנה', 'הזמנה חדשה'], true))) {
+            $data = poagent_bench_a_new_order($data);   // the order's clock starts here
+            poagent_bench_note($data['bench'], $event);
+            poagent_bench_a_ask_supplier($ctx, $data);
+        } elseif ($state === 'a_menu' && ($id === 'menu_dn' || in_array($text, ['תעודה', 'תעודת משלוח'], true))) {
+            poagent_dn_chat_start($ctx, $data);
+        } else {
+            poagent_bench_a_menu($ctx, $data, $name);
+        }
         return;
     }
     poagent_bench_note($data['bench'], $event);
@@ -88,6 +110,14 @@ function poagent_bench_a_handle(array $event, string $name): void
         default:   // a_build
             poagent_bench_a_build($ctx, $data, $event);
     }
+}
+
+/** "What would you like to do?" [📦 הזמנה חדשה] [📄 תעודת משלוח] — whatever the first message said. */
+function poagent_bench_a_menu(array $ctx, array $data, string $name): void
+{
+    WaClient::buttons($ctx['pnid'], $ctx['from'], 'שלום' . ($name !== '' ? " {$name}" : '') . " 👋\nמה תרצו לעשות?\n(תעודת משלוח: אפשר גם פשוט לשלוח צילום)",
+        [['id' => 'menu_po', 'title' => '📦 הזמנה חדשה'], ['id' => 'menu_dn', 'title' => '📄 תעודת משלוח']]);
+    poagent_bench_save($ctx['from'], 'a_menu', $data, $ctx['pnid'], true);
 }
 
 function poagent_bench_a_new_order(array $data): array

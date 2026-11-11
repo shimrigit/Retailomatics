@@ -1713,3 +1713,30 @@ integrity requirements — most likely business verification (WhatsApp Manager s
 business" and the unverified 250 business-initiated limit) and a complete business profile. Method A
 (plain messages) is unaffected. The bot now answers a refused Flow with a short text instead of
 silence (and leaves no order open). Tests 120/120.
+
+### Delivery notes from WhatsApp, several pages (Nov 12, 2026)
+Asked for: on the same number, as simple as possible, photo from WhatsApp or the gallery, a DN may have
+several pages, a "סיום" button. Method B waits for Meta's business verification, so this is on method A.
+- **First question** (method A, nothing in progress): "מה תרצו לעשות?" [📦 הזמנה חדשה] [📄 תעודת משלוח]
+  (`a_menu`, parked). The order's clock (measurement) starts at [הזמנה חדשה].
+- **`whatsapp/dn_chat.php`**: `d_po` — the open POs (open / prcv) to tap, the phone's own first, then
+  everyone's (as dn_select_po.php); more than 10: type a PO number or part of the supplier. `d_pages` —
+  a photo per page (image, or a JPEG/PNG document; a PDF is refused with a message), after each
+  "✓ עמוד N התקבל" [✅ סיום] [ביטול], up to 10 pages. A photo sent with nothing in progress is kept and
+  the PO asked for. During an order a photo is refused ("finish or cancel first"). Phones on the login
+  link: photos ignored, as before.
+- Pages wait in `DNdir/_incoming/` until סיום → `DNStore::importPages()`: one ordinary pending DN
+  (page 1 `<dn_core_name>.<ext>` as always, then `<dn_core_name>_p2.<ext>`…) and the PO → `preocr`; the
+  office runs OCR as for any upload. ביטול, or the idle sweep closing it (10 + 5 min), deletes them.
+- **Multi-page through the pipeline:** `DNStore::pagePaths()` / `pageFilenames()`; `findPendingImage()`
+  skips `_pN` files; `DNOcr::extract()` takes all pages in one vision call ("pages of ONE delivery note…
+  all rows in one items list"); dn_import / dn_ocr_process / dn_process_ocr_run pass them all;
+  `poagent_render_dn_pages()` (ui_common) shows a zoom panel per page with "עמוד N מתוך M" — used by
+  po_view, dn_review, dn_result; dn_delete_pending deletes every page. A single-page DN is unchanged.
+- `WaClient::downloadMedia()` (media id → URL → bytes). Messages of one phone are handled one at a
+  time (a lock in `poagent_bench_handle`): several photos picked together arrive as near-simultaneous
+  webhooks and would otherwise overwrite each other's page.
+**Verified:** tests 138/138 (menu, PO list own-first, pages, PNG document, PDF refused, nothing before
+סיום, page 2 not a DN of its own, preocr, incoming cleared, two panels on the site, photo-first, PO
+number search, a PO waiting for OCR not offered, cancel, photo during an order, link users unchanged);
+a real single-page DN renders as before. **Not yet tried on a real phone.**

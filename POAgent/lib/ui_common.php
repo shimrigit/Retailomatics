@@ -389,6 +389,23 @@ function poagent_render_foot(): void
  * the panel's fixed height (CSS length, e.g. "78vh" or "520px") — width
  * comes from the caller's layout (typically a flex/grid column).
  */
+/**
+ * A delivery note's photo(s): one zoom panel per page — a DN sent from
+ * WhatsApp can have several (DNStore::pageFilenames()); "עמוד N מתוך M"
+ * above each when there's more than one.
+ */
+function poagent_render_dn_pages(string $firstFilename, string $alt, string $height = '78vh'): void
+{
+    require_once __DIR__ . '/DNStore.php';
+    $pages = DNStore::pageFilenames($firstFilename);
+    foreach ($pages as $i => $file) {
+        if (count($pages) > 1) {
+            echo '<p class="muted" style="margin:' . ($i ? '14px' : '0') . ' 0 4px"><b>עמוד ' . ($i + 1) . ' מתוך ' . count($pages) . '</b></p>';
+        }
+        poagent_render_zoom_panel('dn_image.php?f=' . rawurlencode($file), $alt . (count($pages) > 1 ? ' — עמוד ' . ($i + 1) : ''), $height);
+    }
+}
+
 function poagent_render_zoom_panel(string $imageUrl, string $alt, string $height = '78vh'): void
 {
     ?>

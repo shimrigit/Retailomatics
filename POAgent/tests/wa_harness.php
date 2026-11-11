@@ -22,6 +22,7 @@ const WA_TEST_STRANGER = '972500000902';   // not allowed — the router must dr
 
 define('POAGENT_PODIR', WA_TEST_DIR . '/POdir');
 define('POAGENT_COUNTER_DIR', WA_TEST_DIR . '/POcounter');
+define('POAGENT_DNDIR', WA_TEST_DIR . '/DNdir');
 define('POAGENT_ACCESS_FILE', WA_TEST_DIR . '/user_access.json');
 define('POAGENT_LOG_DIR', WA_TEST_DIR . '/logs');
 define('POAGENT_WA_LOG_DIR', WA_TEST_DIR . '/logs');

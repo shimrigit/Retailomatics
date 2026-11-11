@@ -82,8 +82,15 @@ function poagent_bench_b_handle(array $event, string $name): void
     $body = $again
         ? "הטופס פתוח — ההזמנה והעגלה שמורות. לחצו להמשך 👇"
         : 'שלום' . ($name !== '' ? " {$name}" : '') . " 👋\nהזמנת רכש חדשה — הכול בטופס אחד: ספק, מוצרים, כמויות ואישור.";
-    WaClient::flow($pnid, $from, $body, 'פתח הזמנה', $cfg['flow_id'], poagent_bench_b_token($from, $data['b_ref']), $cfg['mode'],
+    $sent = WaClient::flow($pnid, $from, $body, 'פתח הזמנה', $cfg['flow_id'], poagent_bench_b_token($from, $data['b_ref']), $cfg['mode'],
         'אפשר לסגור ולפתוח שוב — העגלה נשמרת');
+    if (!$sent) {
+        // Meta refused the Flow message (e.g. #139000 "Blocked by Integrity" — the business not
+        // verified yet; the reason is in whatsapp_app/logs/send_*.log). Say so instead of silence.
+        poagent_whatsapp_log(['ts' => date('c'), 'event' => 'bench_b_flow_not_sent', 'from' => $from]);
+        WaClient::text($pnid, $from, "הטופס של שיטה B לא זמין כרגע (וואטסאפ לא אישר לשלוח אותו).\nכדי להזמין באתר כתבו: אתר");
+        return;
+    }
     poagent_bench_save($from, 'b_open', $data, $pnid);
 }
 

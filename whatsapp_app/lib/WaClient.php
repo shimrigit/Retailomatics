@@ -18,6 +18,8 @@ class WaClient
      * going to the Graph API. null (the default) = send for real.
      */
     public static ?array $captured = null;
+    /** Dry run only: message types whose "send" fails, as when Meta refuses one (e.g. ['interactive']). */
+    public static array $captureFailTypes = [];
 
     /**
      * Send a plain text message. Returns true on HTTP 200.
@@ -205,7 +207,7 @@ class WaClient
     {
         if (self::$captured !== null) {
             self::$captured[] = $payload;
-            return true;
+            return !in_array($payload['type'] ?? '', self::$captureFailTypes, true);
         }
         $token = self::token();
         if ($token === '' || $phoneNumberId === '') {

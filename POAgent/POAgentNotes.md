@@ -1701,3 +1701,15 @@ action, quantity 120, replace / remove, zero results, BACK, CONFIRM, the PO from
 duplicate, old token refused, the Flow JSON against Meta's limits and routing rules); the real
 endpoint answers ping through Apache (~0.3 s) and through ngrok (~1.1 s); unsigned → 432, undecryptable
 → 421. **Not yet:** public key registered at Meta, the Flow created in WhatsApp Manager, a phone test.
+
+**Setup at Meta (Nov 11):** public key registered (`flow_setup.php register`, status VALID). Flow
+"POAgent purchase order" created in WhatsApp Manager (Account tools → Flows → Create flow → With
+Endpoint, template JSON replaced by ours: 0 errors), endpoint URI set, Meta app connected, health check
+passed (seen in flow_*.log: ping answered in 320 ms). Flow id 1567680725138201 in config.json
+(`flow_mode` draft — not published).
+**First phone test: Meta refused to send the Flow message** — `(#139000) Blocked by Integrity:
+Integrity requirements not met` (send_*.log). Not our code: Flows need the business to meet Meta's
+integrity requirements — most likely business verification (WhatsApp Manager showed "Verify your
+business" and the unverified 250 business-initiated limit) and a complete business profile. Method A
+(plain messages) is unaffected. The bot now answers a refused Flow with a short text instead of
+silence (and leaves no order open). Tests 120/120.

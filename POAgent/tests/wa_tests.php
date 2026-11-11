@@ -369,6 +369,12 @@ wa_check($t2 !== $token && str_contains(wa_test_text($sent[0]), 'הזמנת רכ
 $sent = $say('עוד משהו');
 wa_check(($sent[0]['interactive']['action']['parameters']['flow_token'] ?? '') === $t2 && str_contains(wa_test_text($sent[0]), 'הטופס פתוח'),
     'a message while a form is open → the same form again, cart kept');
+WaSessionStore::clear(WA_TEST_FROM);
+WaClient::$captureFailTypes = ['interactive'];   // Meta refuses the Flow message (#139000 Blocked by Integrity)
+$sent = $say('היי');
+WaClient::$captureFailTypes = [];
+wa_check(count($sent) === 2 && ($sent[1]['type'] ?? '') === 'text' && str_contains(wa_test_text($sent[1]), 'לא זמין כרגע')
+    && wa_test_session() === null, 'Meta refuses the form → the user is told so (not silence), no order left open');
 wa_check_limits($all, 'method B');
 
 // The Flow JSON itself: Meta's rules we can check here.

@@ -4,6 +4,8 @@ session_start();
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/xlsx_retry.php';
 require_once __DIR__ . '/flow_mode.php';
+require_once __DIR__ . '/shop_city.php';
+require_once __DIR__ . '/../commercialLayer/cpd_client.php';
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
@@ -113,6 +115,15 @@ unset($_SESSION['br_results'], $_SESSION['br_npdir'], $_SESSION['br_xlsx'],
     <input type="hidden" name="date"      value="<?= htmlspecialchars($date) ?>">
     <input type="hidden" name="dept_file" value="<?= htmlspecialchars($deptFile) ?>">
     <input type="hidden" name="mode"      value="<?= htmlspecialchars($mode) ?>">
+    <?php // The CPD price region: the shop's city if CPD has it, else the first (Tel Aviv). ?>
+    <?php $cpdRegions = new CPDClient(); $cpdRegion = $cpdRegions->regionKey(npShopCity($shop)); ?>
+    <label style="font-size:20px;margin-left:12px">אזור מחירים:
+        <select name="city" style="font-size:20px">
+            <?php foreach ($cpdRegions->regions() as $key => $name): ?>
+                <option value="<?= htmlspecialchars($name) ?>" <?= $key === $cpdRegion ? 'selected' : '' ?>><?= htmlspecialchars($name) ?></option>
+            <?php endforeach; ?>
+        </select>
+    </label>
     <button type="submit" class="btn-next">המשך לשלב 2 – מחירי רשתות (CPD) ←</button>
 </form>
 <?php renderFlowAutoAdvance($mode, 'advanceForm'); ?>

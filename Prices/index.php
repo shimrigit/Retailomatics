@@ -27,7 +27,7 @@ $updateRunning = function () {
 };
 
 // The two background jobs (one at a time — they write the same database):
-//   update   update.js  — Tel Aviv prices, daily (~12 minutes)
+//   update   update.js  — the regions' prices (Tel Aviv, Jerusalem), daily
 //   catalog  catalog.js — every store in the country, for product names + a national price range, weekly
 $jobs = ['update' => 'update.js', 'catalog' => 'catalog.js'];
 if (isset($jobs[$_POST['action'] ?? ''])) {
@@ -35,20 +35,21 @@ if (isset($jobs[$_POST['action'] ?? ''])) {
     $job = $_POST['action'];
     if ($updateRunning()) exit(json_encode(['ok' => true, 'already' => true]));
     file_put_contents(UPDATE_LOCK, json_encode(['job' => $job]));
-    if ($job === 'catalog') @unlink(PRICES_DIR . '/data/progress.json');
+    @unlink(PRICES_DIR . '/data/progress.json');   // both jobs write their progress there
     $dir = str_replace('/', '\\', PRICES_DIR);
     $cmd = 'cd /d "' . $dir . '" && "' . NODE_EXE . '" --no-warnings ' . $jobs[$job] . ' > data\\' . $job . '.log 2>&1 & del data\\update.running';
     pclose(popen('start "" /B cmd /c "' . $cmd . '"', 'r'));
     exit(json_encode(['ok' => true]));
 }
-// Progress of the background job: running? which job, the log's last lines, and catalog.js's progress.
+// Progress of the background job: running? which job, the log's last lines, and its progress (stores done / total).
 if (($_GET['action'] ?? '') === 'status') {
     header('Content-Type: application/json; charset=utf-8');
     $running = $updateRunning();
     $job = $running ? (json_decode((string) @file_get_contents(UPDATE_LOCK), true)['job'] ?? 'update') : null;
     $logFile = PRICES_DIR . '/data/' . ($job ?: 'update') . '.log';
     $log = is_file($logFile) ? preg_split('/\r?\n/', trim((string) file_get_contents($logFile))) : [];
-    $progress = $job === 'catalog' ? json_decode((string) @file_get_contents(PRICES_DIR . '/data/progress.json'), true) : null;
+    $progress = $running ? json_decode((string) @file_get_contents(PRICES_DIR . '/data/progress.json'), true) : null;
+    if (($progress['job'] ?? null) !== $job) $progress = null;
     exit(json_encode(['running' => $running, 'job' => $job, 'log' => array_slice($log, -12), 'progress' => $progress], JSON_UNESCAPED_UNICODE));
 }
 
@@ -56,6 +57,10 @@ $chainNames = [];
 foreach ((json_decode((string) @file_get_contents(PRICES_DIR . '/chains.json'), true)['chains'] ?? []) as $c) {
     $chainNames[$c['key']] = $c['name'];
 }
+$cpd = new CPDClient();
+$regions = $cpd->regions();                                     // tlv => תל אביב, jlm => ירושלים
+$regionsText = implode(' ו', $regions);                         // "תל אביב וירושלים"
+$region = isset($regions[$_REQUEST['r'] ?? '']) ? $_REQUEST['r'] : '';   // the search's region filter ('' = all)
 
 $error = null;
 $db = null;
@@ -80,8 +85,11 @@ if ($db) {
     $counts = $db->query("SELECT (SELECT COUNT(*) FROM stores s WHERE $activeOnly) stores, (SELECT COUNT(*) FROM products) products,
         (SELECT MAX(updated) FROM stores s WHERE $activeOnly) updated")->fetch(PDO::FETCH_ASSOC);
     $qCard = $db->prepare('SELECT * FROM products WHERE barcode = ?');
-    $qPrices = $db->prepare("SELECT p.chain, p.store_id, p.price, p.date, s.name store FROM current_prices p
-        LEFT JOIN stores s ON s.chain = p.chain AND s.store_id = p.store_id WHERE p.barcode = ? AND $activeOnly ORDER BY p.price, p.chain");
+    $hasRegion = (bool) $db->query("SELECT 1 FROM pragma_table_info('stores') WHERE name = 'region'")->fetchColumn();
+    $regionCol = $hasRegion ? "COALESCE(s.region, 'tlv')" : "'tlv'";
+    $qPrices = $db->prepare("SELECT p.chain, p.store_id, p.price, p.date, s.name store, $regionCol region FROM current_prices p
+        LEFT JOIN stores s ON s.chain = p.chain AND s.store_id = p.store_id WHERE p.barcode = ? AND $activeOnly"
+        . ($region !== '' ? " AND $regionCol = " . $db->quote($region) : '') . ' ORDER BY p.price, p.chain');
     $qVariants = $db->prepare('SELECT chain, name, manufacturer FROM variants WHERE barcode = ?');
     // The national catalog (catalog.js) — absent until its first run.
     $hasCatalog = (bool) $db->query("SELECT 1 FROM sqlite_master WHERE name = 'catalog_runs'")->fetchColumn();
@@ -116,7 +124,7 @@ if ($db) {
 // CSV (opens in Excel): one row per barcode.
 if (($_GET['format'] ?? '') === 'csv' && $results) {
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="chain-prices-' . date('Ymd-His') . '.csv"');
+    header('Content-Disposition: attachment; filename="chain-prices-' . ($region !== '' ? "$region-" : '') . date('Ymd-His') . '.csv"');
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF");
     fputcsv($out, ['ברקוד', 'שם מוצר', 'יצרן', 'גודל', 'מחיר מינימלי', 'מחיר מקסימלי', 'מספר סניפים', 'רשתות']);
@@ -187,6 +195,7 @@ $found = count(array_filter($results, fn($r) => $r['card']));
 </style>
 <script>
     let wasRunning = false;
+    const REGIONS = <?= json_encode($regionsText, JSON_UNESCAPED_UNICODE) ?>;
     const $ = id => document.getElementById(id);
     const fmt = n => Number(n || 0).toLocaleString('en-US');
     async function startJob(job) {
@@ -195,24 +204,30 @@ $found = count(array_filter($results, fn($r) => $r['card']));
         wasRunning = true;
         poll();
     }
-    // catalog.js's progress: a bar over all stores in the country, and each chain's count
-    function showProgress(p) {
+    // The job's progress: a bar over its stores (update.js: the regions', catalog.js: the whole country), and each chain's count
+    function showProgress(job, p) {
         const box = $('catProgress');
         box.style.display = 'block';
-        if (!p || p.phase === 'stores') {
+        if (job === 'update') {
+            const pct = p && p.total ? Math.min(100, Math.round(100 * p.done / p.total)) : 0;
+            $('barFill').style.width = (p && p.phase === 'saving' ? 100 : Math.max(2, pct)) + '%';
+            $('barText').textContent = !p ? 'מתחיל…' : p.phase === 'saving' ? 'שומר במאגר ובונה כרטיסי מוצר…'
+                : `${fmt(p.done)} / ${fmt(p.total)} סניפים (${pct}%) · ${Math.round(p.mb)} MB` + (p.failed ? ` · ${p.failed} נכשלו` : '');
+        } else if (!p || p.phase === 'stores') {
             $('barFill').style.width = '2%';
             $('barText').textContent = 'מוריד את רשימות הסניפים מכל הרשתות…' + (p && p.total ? ` (${fmt(p.total)} סניפים עד כה)` : '');
         } else if (p.phase === 'download') {
             $('barFill').style.width = (p.total ? Math.round(100 * p.done / p.total) : 0) + '%';
             $('barText').textContent = `${fmt(p.done)} / ${fmt(p.total)} סניפים (${p.total ? Math.round(100 * p.done / p.total) : 0}%) · `
-                + `${fmt(p.barcodes)} ברקודים · ${fmt(p.newBarcodes)} חדשים (לא בתל אביב) · ${Math.round(p.mb)} MB`
+                + `${fmt(p.barcodes)} ברקודים · ${fmt(p.newBarcodes)} חדשים (לא ב${REGIONS}) · ${Math.round(p.mb)} MB`
                 + (p.failed ? ` · ${p.failed} נכשלו` : '');
         } else if (p.phase === 'saving') {
             $('barFill').style.width = '100%';
             $('barText').textContent = 'שומר במאגר ובונה כרטיסי מוצר…';
         }
         $('barChains').innerHTML = p ? Object.values(p.chains).map(c => {
-            const t = c.error ? '✗ נכשלה' : c.total && c.done === c.total ? '✓ ' + fmt(c.barcodes) + ' ברקודים' : `${c.done}/${c.total || '?'}`;
+            const t = c.error ? '✗ נכשלה' : c.total && c.done === c.total
+                ? '✓ ' + (c.barcodes !== undefined ? fmt(c.barcodes) + ' ברקודים' : c.total + ' סניפים') : `${c.done}/${c.total || '?'}`;
             return `<div>${c.name}: ${t}</div>`;
         }).join('') : '';
     }
@@ -222,9 +237,8 @@ $found = count(array_filter($results, fn($r) => $r['card']));
             wasRunning = true;
             document.querySelectorAll('.btn-update').forEach(b => b.disabled = true);
             $(s.job === 'catalog' ? 'catBtn' : 'updBtn').textContent = '⟳ מעדכן…';
-            if (s.job === 'catalog') {
-                showProgress(s.progress);
-            } else {
+            showProgress(s.job, s.progress);
+            if (s.job === 'update') {
                 const log = $('updLog');
                 log.style.display = 'block';
                 log.textContent = s.log.join('\n') || 'מתחיל…';
@@ -260,23 +274,28 @@ $found = count(array_filter($results, fn($r) => $r['card']));
         ?>
         <div class="runs">
             <div class="run-box">
-                <h4>מחירי תל אביב <span class="muted">· יומי</span></h4>
+                <h4>מחירי <?= htmlspecialchars($regionsText) ?> <span class="muted">· יומי</span></h4>
                 <?php if ($lastRun): ?>
                     <div>ריצה אחרונה: <b><?= $when($lastRun['finished']) ?></b> · משך <?= $dur($lastRun['started'], $lastRun['finished']) ?></div>
-                    <div><?= (int) $lastRun['stores'] ?> סניפים · <?= $num($lastRun['items']) ?> מחירים</div>
+                    <?php // items = price rows (a barcode in 100 stores is 100 of them) — barcodes is the count comparable with the catalog's. ?>
+                    <div><?= (int) $lastRun['stores'] ?> סניפים<?= isset($lastRun['barcodes']) ? ' · ' . $num($lastRun['barcodes']) . ' ברקודים' : '' ?>
+                        <span class="muted">(<?= $num($lastRun['items']) ?> מחירים: ברקוד × סניף)</span></div>
                     <div><b><?= $num($lastRun['changed'] ?? null) ?></b> מחירים השתנו · <b><?= $num($lastRun['new_products'] ?? null) ?></b> מוצרים חדשים</div>
+                    <?php foreach (json_decode((string) ($lastRun['by_region'] ?? ''), true) ?: [] as $br): ?>
+                        <div class="muted"><?= htmlspecialchars($br['name']) ?>: <?= (int) $br['stores'] ?> סניפים<?= isset($br['barcodes']) ? ' · ' . $num($br['barcodes']) . ' ברקודים' : '' ?> · <?= $num($br['changed']) ?> מחירים השתנו</div>
+                    <?php endforeach; ?>
                 <?php else: ?>
                     <div class="muted">עוד לא רץ</div>
                 <?php endif; ?>
                 <?php if ($stale): ?><div class="warn-text">הנתונים לא מהיום — כדאי לעדכן</div><?php endif; ?>
-                <button type="button" id="updBtn" class="btn-update" onclick="startJob('update')">⟳ עדכן מחירי תל אביב</button>
+                <button type="button" id="updBtn" class="btn-update" onclick="startJob('update')">⟳ עדכן מחירי <?= htmlspecialchars($regionsText) ?></button>
             </div>
             <div class="run-box">
                 <h4>קטלוג ארצי <span class="muted">· שבועי, כל הסניפים בארץ</span></h4>
                 <?php if ($cs): $t = $cs['totals']; ?>
                     <div>ריצה אחרונה: <b><?= $when($lastCatalog['finished']) ?></b> · משך <?= $dur($lastCatalog['started'], $lastCatalog['finished']) ?></div>
                     <div><?= $num($t['stores']) ?> מתוך <?= $num($t['listed']) ?> סניפים · <?= $num($t['barcodes']) ?> ברקודים</div>
-                    <div><b><?= $num($t['productsAfter'] - $t['productsBefore']) ?></b> מוצרים חדשים נוספו · <?= $num($t['newBarcodes']) ?> לא נמכרים בתל אביב</div>
+                    <div><b><?= $num($t['productsAfter'] - $t['productsBefore']) ?></b> מוצרים חדשים נוספו · <?= $num($t['newBarcodes']) ?> לא נמכרים ב<?= htmlspecialchars($regionsText) ?></div>
                     <?php if ($age >= 7): ?><div class="warn-text">עברו <?= $age ?> ימים — כדאי לעדכן</div><?php endif; ?>
                 <?php else: ?>
                     <div class="muted">עוד לא רץ</div>
@@ -286,7 +305,7 @@ $found = count(array_filter($results, fn($r) => $r['card']));
         </div>
         <div class="status">במאגר: <?= number_format((int) $counts['products']) ?> מוצרים · אפשר להמשיך לעבוד בזמן עדכון, גם לסגור את הדף.</div>
         <?php
-        $cov = (new CPDClient())->coverage();
+        $cov = $cpd->coverage();
         $runErrors = $lastRun ? (json_decode((string) $lastRun['errors'], true) ?: []) : [];
         ?>
         <?php $storeList = fn($rows) => htmlspecialchars(implode(' · ', array_map(fn($s) => "{$s['chain']} {$s['name']} ({$s['days']} ימים)", $rows))); ?>
@@ -298,7 +317,8 @@ $found = count(array_filter($results, fn($r) => $r['card']));
         <?php if ($minor): ?>
             <div class="status">מפגרים ביום-יומיים (רגיל — לפעמים רשת לא מפרסמת קובץ): <?= $storeList($minor) ?></div>
         <?php elseif (!$cov['warn'] && !$stale): ?>
-            <div class="status ok">✓ כל <?= $cov['total'] ?> הסניפים בתל אביב עודכנו היום</div>
+            <div class="status ok">✓ כל הסניפים עודכנו היום: <?= htmlspecialchars(implode(' · ',
+                array_map(fn($k, $n) => "$n ב" . $cpd->regionName($k), array_keys($cov['regions']), $cov['regions']))) ?></div>
         <?php endif; ?>
         <?php if ($cov['hidden']): ?>
             <details class="run-errors"><summary><?= count($cov['hidden']) ?> סניפים מוסתרים (נסגרו / לא מפרסמים) — פירוט</summary>
@@ -327,7 +347,7 @@ $found = count(array_filter($results, fn($r) => $r['card']));
                 <?= (int) $t['mb'] ?> MB<?= $t['failed'] ? " · {$t['failed']} סניפים בלי קובץ" : '' ?></p>
             <div class="cols">
                 <div><table>
-                    <tr><th>רשת</th><th class="num">סניפים</th><th class="num">ברקודים</th><th class="num">לא בתל אביב</th></tr>
+                    <tr><th>רשת</th><th class="num">סניפים</th><th class="num">ברקודים</th><th class="num">לא ב<?= htmlspecialchars($regionsText) ?></th></tr>
                     <?php foreach ($cs['chains'] as $c): ?>
                         <tr><td><?= htmlspecialchars($c['name']) ?><?= $c['error'] ? ' <span class="muted">(נכשלה)</span>' : '' ?></td>
                             <td class="num"><?= $c['done'] - $c['failed'] ?><?= $c['failed'] ? "/{$c['total']}" : '' ?></td>
@@ -335,23 +355,29 @@ $found = count(array_filter($results, fn($r) => $r['card']));
                     <?php endforeach; ?>
                 </table></div>
                 <div><table>
-                    <tr><th>מחוז</th><th class="num">סניפים</th><th class="num">ברקודים</th><th class="num">לא בתל אביב</th></tr>
+                    <tr><th>מחוז</th><th class="num">סניפים</th><th class="num">ברקודים</th><th class="num">לא ב<?= htmlspecialchars($regionsText) ?></th></tr>
                     <?php foreach ($cs['districts'] as $d): ?>
                         <tr><td><?= htmlspecialchars($d['district']) ?></td><td class="num"><?= $d['stores'] ?></td>
                             <td class="num"><?= number_format($d['barcodes']) ?></td><td class="num"><?= number_format($d['newBarcodes']) ?></td></tr>
                     <?php endforeach; ?>
                 </table></div>
             </div>
-            <p class="muted">"לא בתל אביב" — ברקודים שאין להם מחיר בסניפי תל אביב: בזכותם מוצר שלא נמכר בתל אביב מקבל שם, ו-NP מקבל עבורו טווח מחירים ארצי (מסומן בצהוב).</p>
+            <p class="muted">"לא ב<?= htmlspecialchars($regionsText) ?>" — ברקודים שאין להם מחיר בסניפים שמתעדכנים יומית: בזכותם מוצר כזה מקבל שם, ו-NP מקבל עבורו טווח מחירים ארצי (מסומן בצהוב).</p>
         </details>
     <?php endif; ?>
 
     <form method="get">
         <textarea name="b" placeholder="הדבק ברקודים — אחד בשורה, או מופרדים בפסיק/רווח"><?= htmlspecialchars($input) ?></textarea>
         <div class="row">
+            <select name="r" style="font-size:18px;padding:8px;border-radius:8px">
+                <option value="">כל האזורים</option>
+                <?php foreach ($regions as $k => $name): ?>
+                    <option value="<?= htmlspecialchars($k) ?>" <?= $k === $region ? 'selected' : '' ?>><?= htmlspecialchars($name) ?></option>
+                <?php endforeach; ?>
+            </select>
             <button type="submit">חפש</button>
             <?php if ($results): ?>
-                <a class="btn secondary" href="?<?= htmlspecialchars(http_build_query(['b' => $input, 'format' => 'csv'])) ?>">⬇ ייצא לאקסל (CSV)</a>
+                <a class="btn secondary" href="?<?= htmlspecialchars(http_build_query(['b' => $input, 'r' => $region, 'format' => 'csv'])) ?>">⬇ ייצא לאקסל (CSV)</a>
             <?php endif; ?>
         </div>
     </form>
@@ -369,7 +395,7 @@ $found = count(array_filter($results, fn($r) => $r['card']));
                         <span class="muted"><?= count($p) ?> סניפים</span>
                     <?php elseif ($n = $r['national']): ?>
                         <span class="range national"><?= $n['min'] == $n['max'] ? '₪' . $money($n['min']) : '₪' . $money($n['min']) . ' – ₪' . $money($n['max']) ?></span>
-                        <span class="muted">ארצי · לא בתל אביב · <?= (int) $n['stores'] ?> סניפים
+                        <span class="muted">ארצי · לא ב<?= htmlspecialchars($region !== '' ? $regions[$region] : $regionsText) ?> ·<?= (int) $n['stores'] ?> סניפים
                             (<?= htmlspecialchars(implode(', ', array_map(fn($c) => $chainNames[$c] ?? $c, explode(',', $n['chains'])))) ?>)</span>
                     <?php endif; ?>
                 </div>
@@ -381,10 +407,10 @@ $found = count(array_filter($results, fn($r) => $r['card']));
                             השם בכל רשת: <?= htmlspecialchars(implode(' | ', array_map(fn($v) => ($chainNames[$v['chain']] ?? $v['chain']) . ': ' . $v['name'], $r['variants']))) ?>
                         </p>
                         <table>
-                            <tr><th>מחיר</th><th>רשת</th><th>סניף</th><th>עודכן</th></tr>
+                            <tr><th>מחיר</th><th>רשת</th><th>סניף</th><th>אזור</th><th>עודכן</th></tr>
                             <?php foreach ($r['prices'] as $row): ?>
                                 <tr><td>₪<?= $money($row['price']) ?></td><td><?= htmlspecialchars($chainNames[$row['chain']] ?? $row['chain']) ?></td>
-                                    <td><?= htmlspecialchars($row['store'] ?? $row['store_id']) ?></td><td><?= htmlspecialchars(date('d/m', strtotime($row['date']))) ?></td></tr>
+                                    <td><?= htmlspecialchars($row['store'] ?? $row['store_id']) ?></td><td><?= htmlspecialchars($cpd->regionName($row['region'])) ?></td><td><?= htmlspecialchars(date('d/m', strtotime($row['date']))) ?></td></tr>
                             <?php endforeach; ?>
                         </table>
                     </details>

@@ -4,6 +4,7 @@ set_time_limit(0);
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/xlsx_retry.php';
 require_once __DIR__ . '/flow_mode.php';
+require_once __DIR__ . '/shop_city.php';
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
@@ -178,7 +179,12 @@ function sf() { echo str_pad('', 512, ' '); flush(); }
 <?php
 sf();
 $results = [];
-$city    = 'תל אביב';
+// The region whose prices are used: chosen before stage 2 (stage_br_save.php),
+// else the shop's shopDefaultCity — CPD's regionKey() makes anything that isn't
+// a CPD region (חולון, יהוד) Tel Aviv.
+$city    = $_POST['city'] ?? npShopCity($shop);
+$regionName = $cpd->regionName($cpd->regionKey($city));
+echo '<p class="pl done">אזור מחירים: ' . htmlspecialchars($regionName) . '</p>';
 
 if (NP_PRICE_SOURCE === 'cpd' && $cpd->available()) {
     echo '<p class="pl" id="pnames">יוצר שמות מוצרים (AI) לברקודים חדשים...</p>';
@@ -205,7 +211,7 @@ foreach ($barcodes as $idx => $item) {
     echo '<script>
         var el = document.getElementById("p' . $z . '");
         el.className = "pl done";
-        el.textContent = ' . json_encode('✔ ברקוד ' . $z . ': ' . $item['barcode'] . ' ← ' . $parsed['hebrewName'] . ' | מקס: ' . $parsed['maxPrice'] . ' | מין: ' . $parsed['minPrice'] . ($parsed['national'] ? ' (ארצי — לא בתל אביב)' : ''), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) . ';
+        el.textContent = ' . json_encode('✔ ברקוד ' . $z . ': ' . $item['barcode'] . ' ← ' . $parsed['hebrewName'] . ' | מקס: ' . $parsed['maxPrice'] . ' | מין: ' . $parsed['minPrice'] . ($parsed['national'] ? " (ארצי — לא ב{$regionName})" : ''), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) . ';
     </script>';
     sf();
 

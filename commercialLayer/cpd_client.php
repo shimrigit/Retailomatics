@@ -4,7 +4,8 @@
  * CHPHeadlessClient (chp_headless_client.php).
  *
  * Reads the chains' official price files that C:\RetailAgents\PriceTransparency
- * downloads daily (update.js → data/cpd.sqlite; Tel Aviv stores only).
+ * downloads daily (update.js → data/cpd.sqlite; the stores of the regions in
+ * chains.json — Tel Aviv, Jerusalem; each store has its region).
  * searchPrices() returns the same shape as chp_scraper.js, so code that parses
  * CHP results works unchanged:
  *   productInfo  "<name> (יצרן/מותג: <brand>, ברקוד: <barcode>)"
@@ -26,6 +27,7 @@ define('CPD_WARN_DAYS', 3);
 class CPDClient {
     private $db = null;
     private $chainNames = [];
+    private $regions = [];   // key => name, from chains.json ("tlv" => "תל אביב", ...)
     public $error = null;
 
     public function __construct() {
@@ -37,9 +39,34 @@ class CPDClient {
         } catch (Throwable $e) {
             $this->error = 'מאגר CPD לא נמצא (' . CPD_DB_PATH . ') — הרץ node update.js ב-C:\RetailAgents\PriceTransparency';
         }
-        foreach ((json_decode((string) @file_get_contents(CPD_CHAINS_PATH), true)['chains'] ?? []) as $c) {
+        $config = json_decode((string) @file_get_contents(CPD_CHAINS_PATH), true) ?: [];
+        foreach ($config['chains'] ?? [] as $c) {
             $this->chainNames[$c['key']] = $c['name'];
         }
+        foreach ($config['regions'] ?? [['key' => 'tlv', 'name' => 'תל אביב']] as $r) {
+            $this->regions[$r['key']] = $r['name'];
+        }
+    }
+
+    /** The regions CPD keeps prices for: key => name ("tlv" => "תל אביב"). The first is the default. */
+    public function regions() {
+        return $this->regions;
+    }
+
+    /**
+     * A region key from a city / region name or key ("ירושלים", "jlm"); the
+     * first region (Tel Aviv) for anything else — e.g. a shop in Holon.
+     */
+    public function regionKey($city) {
+        $city = trim((string) $city);
+        foreach ($this->regions as $key => $name) {
+            if ($city === $key || $city === $name) return $key;
+        }
+        return array_key_first($this->regions);
+    }
+
+    public function regionName($key) {
+        return $this->regions[$key] ?? $key;
     }
 
     /** Today in Israel (PHP here runs on Europe/Berlin; update.js stamps local dates). */
@@ -65,13 +92,14 @@ class CPDClient {
      * The stores' freshness, measured against the newest data in CPD (not the
      * calendar — a week without pressing "update" isn't a store problem):
      *   total / today   active stores, and how many have today's prices
+     *   regions         active stores per region: [key => count]
      *   newest          the newest store's date
      *   behind          active stores with older prices than newest: [{chain, name, updated, days}]
      *   warn            those CPD_WARN_DAYS or more days behind (a store, or a whole chain, not publishing)
      *   hidden          stores update.js hid (closed / silent 14 days): [{chain, name, reason, since}]
      */
     public function coverage() {
-        $out = ['total' => 0, 'today' => 0, 'newest' => null, 'behind' => [], 'warn' => [], 'hidden' => []];
+        $out = ['total' => 0, 'today' => 0, 'regions' => [], 'newest' => null, 'behind' => [], 'warn' => [], 'hidden' => []];
         if (!$this->db) return $out;
         $stores = $this->db->query('SELECT * FROM stores ORDER BY updated, chain')->fetchAll(PDO::FETCH_ASSOC);
         $active = array_filter($stores, fn($s) => ($s['active'] ?? 1) == 1);
@@ -83,6 +111,8 @@ class CPDClient {
                 continue;
             }
             $out['total']++;
+            $region = $s['region'] ?? 'tlv';
+            $out['regions'][$region] = ($out['regions'][$region] ?? 0) + 1;
             if (substr((string) $s['updated'], 0, 10) === CPDClient::today()) $out['today']++;
             $days = (int) round((strtotime($out['newest']) - strtotime($s['updated'])) / 86400);
             if ($days >= 1) {
@@ -123,8 +153,8 @@ class CPDClient {
     }
 
     /**
-     * Same signature as CHPHeadlessClient::searchPrices(). $city is ignored —
-     * CPD holds the Tel Aviv stores only. $aiName: ['product','size','brand']
+     * Same signature as CHPHeadlessClient::searchPrices(). $city: the region's
+     * prices (regionKey() — "ירושלים", else Tel Aviv). $aiName: ['product','size','brand']
      * from CPDNamer, if the caller has it.
      * Returns false when the database can't be read; a barcode that isn't in
      * CPD returns an empty result (no productInfo, no prices), like CHP did.
@@ -135,10 +165,13 @@ class CPDClient {
         $card = $this->card($barcode);
         if (!$card) return $empty;
 
+        $region = $this->regionKey($city);
+        $hasRegion = (bool) $this->db->query("SELECT 1 FROM pragma_table_info('stores') WHERE name = 'region'")->fetchColumn();
         $q = $this->db->prepare('SELECT p.chain, p.store_id, p.price, s.name store, s.address FROM current_prices p
             LEFT JOIN stores s ON s.chain = p.chain AND s.store_id = p.store_id
-            WHERE p.barcode = ? AND p.price > 0 AND COALESCE(s.active, 1) = 1 ORDER BY p.price, p.chain');
-        $q->execute([$card['barcode']]);
+            WHERE p.barcode = ? AND p.price > 0 AND COALESCE(s.active, 1) = 1'
+            . ($hasRegion ? " AND COALESCE(s.region, 'tlv') = ?" : '') . ' ORDER BY p.price, p.chain');
+        $q->execute($hasRegion ? [$card['barcode'], $region] : [$card['barcode']]);
         $prices = [];
         foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $p) {
             $prices[] = [
@@ -149,7 +182,7 @@ class CPDClient {
             ];
         }
 
-        // Not sold in Tel Aviv: the national range (catalog.js, all stores in the country)
+        // Not sold in the region: the national range (catalog.js, all stores in the country)
         // as two "stores", so callers that take min / max keep working; 'national' marks it.
         $national = null;
         if (!$prices) {
@@ -192,7 +225,8 @@ class CPDClient {
             'size'         => (string) $card['size'],
             'displayName'  => (string) $card['display_name'],
             'aiName'       => !empty($aiName['product']),
-            'national'     => $national,   // set when the prices are the national range, not Tel Aviv's
+            'national'     => $national,   // set when the prices are the national range, not the region's
+            'region'       => $this->regionName($region),
             'source'       => 'CPD',
         ];
     }

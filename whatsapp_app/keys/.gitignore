@@ -1,0 +1,3 @@
+# WhatsApp Flows key pair (lib/FlowCrypto.php) — the private key never goes to git.
+*
+!.gitignore

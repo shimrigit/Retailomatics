@@ -29,6 +29,9 @@ define('WA_SESSION_DIR', WA_TEST_DIR . '/wa_sessions');
 define('WA_ROUTER_LOG_DIR', WA_TEST_DIR . '/logs');
 define('WA_SEND_LOG_DIR', WA_TEST_DIR . '/logs');
 define('WA_REGISTRY_FILE', WA_TEST_DIR . '/apps.json');
+define('WA_FLOW_KEY_DIR', WA_TEST_DIR . '/keys');          // a key pair of the tests' own
+define('WA_FLOW_LOG_DIR', WA_TEST_DIR . '/logs');
+define('POAGENT_BENCH_B_FLOW_ID', 'TEST_FLOW_ID');
 
 @mkdir(WA_TEST_DIR . '/logs', 0777, true);
 // apps.json as it is, plus the test sender on POAgent's allowlist.

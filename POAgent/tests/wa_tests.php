@@ -280,4 +280,117 @@ wa_check($state() === 'a_build' && str_contains(wa_test_text($sent[0]), 'העג�
 wa_check_limits($all, 'method A');
 wa_check(count($all) > 30, 'every one of the ' . count($all) . ' method-A replies within WhatsApp\'s limits');
 
+// ─────────────────────────────────────────────────────────────────────────────
+wa_test_section('Method B — WhatsApp Flow: encryption and the endpoint');
+require_once __DIR__ . '/../../whatsapp_app/flow_endpoint.php';   // wa_flow_handle(); the HTTP part runs only as its own script
+[$priv, $pub] = FlowCrypto::keys();
+$enc = FlowCrypto::encryptRequest(['version' => '3.0', 'action' => 'ping'], $pub);
+$dec = FlowCrypto::decryptRequest($enc['body'], $priv);
+$resp = FlowCrypto::encryptResponse(wa_flow_handle($dec['data']), $dec['key'], $dec['iv']);
+wa_check(FlowCrypto::decryptResponse($resp, $enc['key'], $enc['iv']) === ['data' => ['status' => 'active']],
+    'health check: a request encrypted like Meta\'s → decrypted → "active", encrypted back (IV flipped) and readable');
+$bad = $enc['body'];
+$bad['encrypted_aes_key'] = base64_encode(random_bytes(256));
+try { FlowCrypto::decryptRequest($bad, $priv); $ok = false; } catch (RuntimeException $e) { $ok = true; }
+wa_check($ok, 'a request encrypted for another key → refused (the endpoint answers 421)');
+wa_check(wa_flow_handle(['action' => 'data_exchange', 'data' => ['error' => 'x', 'error_message' => 'y']]) === ['data' => ['acknowledged' => true]],
+    'an error notification from the phone → acknowledged');
+
+poagent_access_set_wa_mode(WA_TEST_FROM, 'b');
+WaSessionStore::clear(WA_TEST_FROM);
+$all = [];
+$sent = $say('היי');
+$p = $sent[0]['interactive']['action']['parameters'] ?? [];
+wa_check(($sent[0]['interactive']['type'] ?? '') === 'flow' && $p['flow_id'] === 'TEST_FLOW_ID' && $p['flow_action'] === 'data_exchange'
+    && $p['flow_message_version'] === '3' && $p['mode'] === 'draft', '"hi" → a Flow message (button "פתח הזמנה", opens through the endpoint)');
+$token = $p['flow_token'];
+$tk = poagent_bench_b_verify($token);
+wa_check($tk && $tk['p'] === WA_TEST_FROM && $tk['r'] === wa_test_session()['data']['b_ref'], 'its flow_token: this phone + this order\'s ref, signed');
+wa_check(poagent_bench_b_verify(substr($token, 0, -2) . 'xx') === null, 'a changed token → refused');
+$ep = fn(string $action, ?string $screen = null, array $d = [], ?string $t = null) =>
+    poagent_bench_b_endpoint(['version' => '3.0', 'action' => $action, 'screen' => $screen, 'data' => $d, 'flow_token' => $t ?? $token]);
+
+$r = $ep('INIT');
+$opts = $r['data']['suppliers'];
+wa_check($r['screen'] === 'SUPPLIER' && count($opts) === count($suppliers) && count($opts) <= 200, 'INIT → SUPPLIER with all ' . count($opts) . ' suppliers (Meta allows 200)');
+wa_check(($opts[0]['description'] ?? '') !== '' && str_contains($opts[0]['description'], 'לאחרונה'), 'recent suppliers first, marked "הזמנתם לאחרונה"');
+wa_check(max(array_map(fn($o) => mb_strlen($o['title']), $opts)) <= 30, 'every supplier title ≤ 30 characters (Meta\'s limit)');
+$r = $ep('data_exchange', 'SUPPLIER', ['supplier' => '', 'from_last' => false]);
+wa_check($r['screen'] === 'SUPPLIER' && ($r['data']['error_message'] ?? '') !== '', 'no supplier chosen → stays, with an error');
+$supIdx = (string) array_search($sup, wa_test_session()['data']['sup_map'], true);
+$r = $ep('data_exchange', 'SUPPLIER', ['supplier' => $supIdx, 'from_last' => true]);
+wa_check($r['screen'] === 'PRODUCTS' && str_contains($r['data']['cart_summary'], 'נטענה ההזמנה הקודמת') && ($cart()[$it[0]] ?? 0) === 7,
+    '"start from the previous order" → PRODUCTS with its lines in the cart');
+wa_check($r['data']['has_results'] && $r['data']['results'][0]['id'] === $it[0], 'the dropdown shows the cart\'s lines, to change or remove');
+$r = $ep('data_exchange', 'PRODUCTS', ['cmd' => 'go', 'q' => $w[0], 'item' => '', 'qty' => '']);
+$resIds = array_column($r['data']['results'], 'id');
+wa_check(count($resIds) >= 2 && str_contains($r['data']['cart_summary'], 'נמצאו'), "search \"{$w[0]}\" → results in the dropdown");
+$new = $resIds[0] === $it[0] ? $resIds[1] : $resIds[0];
+$r = $ep('data_exchange', 'PRODUCTS', ['cmd' => 'go', 'q' => '', 'item' => $new, 'qty' => '']);
+wa_check(($r['data']['error_message'] ?? '') === 'כתבו כמות (0 עד 9999)', 'a product without a quantity → "write a quantity"');
+$r = $ep('data_exchange', 'PRODUCTS', ['cmd' => 'go', 'q' => $w[0], 'item' => $new, 'qty' => '120']);
+wa_check(($cart()[$new] ?? 0) === 120 && str_contains($r['data']['cart_summary'], 'נוסף'), 'product + quantity 120 → added (no 99 limit here)');
+$ep('data_exchange', 'PRODUCTS', ['cmd' => 'go', 'q' => '', 'item' => $it[0], 'qty' => '3']);
+wa_check(($cart()[$it[0]] ?? 0) === 3, 'a cart line + quantity 3 → replaced');
+$ep('data_exchange', 'PRODUCTS', ['cmd' => 'go', 'q' => '', 'item' => $new, 'qty' => '0']);
+wa_check(!isset($cart()[$new]), 'quantity 0 → removed');
+$r = $ep('data_exchange', 'PRODUCTS', ['cmd' => 'go', 'q' => 'zzqqxx', 'item' => '', 'qty' => '']);
+wa_check(str_contains($r['data']['error_message'] ?? '', 'לא נמצא') && array_column($r['data']['results'], 'id') === [$it[0]],
+    'nothing found → an error; the dropdown is back to the cart\'s lines');
+$emptyData = ['supplier' => $sup, 'cart' => []];
+$r = poagent_bench_b_products_screen($emptyData);
+wa_check(!$r['data']['has_results'] && $r['data']['results'] === [['id' => 'none', 'title' => '—']], 'empty cart, no search → the dropdown hidden (with its placeholder option)');
+$r = $ep('BACK', 'PRODUCTS');
+wa_check($r['screen'] === 'PRODUCTS', 'coming back to PRODUCTS (BACK) → refreshed');
+$r = $ep('data_exchange', 'PRODUCTS', ['cmd' => 'confirm']);
+$future = new DateTimeImmutable('+6 days', new DateTimeZone('Asia/Jerusalem'));
+wa_check($r['screen'] === 'CONFIRM' && str_contains($r['data']['summary'], $it[1]) && $r['data']['default_date'] === poagent_wa_next_business_day()
+    && $r['data']['cart_ref'] === $tk['r'], '"לסיכום ואישור" → CONFIRM: summary, delivery date default, the order\'s ref');
+try { $ep('INIT', null, [], poagent_bench_b_token(WA_TEST_FROM, 'otherref')); $ok = false; } catch (WaFlowTokenError $e) { $ok = true; }
+wa_check($ok, 'a token of another order (an old message\'s button) → refused (427)');
+
+$nfm = fn(array $resp) => ['type' => 'interactive', 'interactive' => ['type' => 'nfm_reply',
+    'nfm_reply' => ['name' => 'flow', 'body' => 'Sent', 'response_json' => json_encode($resp)]]];
+$sent = $say($nfm(['flow_token' => $token, 'delivery_date' => $future->format('Y-m-d'), 'cart_ref' => $tk['r']]));
+$bpo = POStore::lastPoFor(WA_TEST_FROM, $sup);
+wa_check(str_contains(wa_test_text($sent[0] ?? []), "הזמנה {$bpo['unique_id']} נוצרה") && ($bpo['source'] ?? '') === 'wa_b',
+    "the Flow sent (nfm_reply) → PO {$bpo['unique_id']} created, source wa_b");
+wa_check(count($bpo['items']) === 1 && $bpo['items'][0]['qty'] === 3 && $bpo['delivery_date'] === $future->format('Y-m-d'), 'the PO: the kept cart, the chosen date');
+$l = $lastLog();
+wa_check($l['mode'] === 'b' && $l['outcome'] === 'created' && $l['searches'] === 2 && $l['zero_result_searches'] === 1 && $l['edits'] === 2,
+    'measured: method b, created, searches, edits', json_encode($l));
+$sent = $say($nfm(['flow_token' => $token, 'delivery_date' => $future->format('Y-m-d'), 'cart_ref' => $tk['r']]));
+wa_check($sent === [] && POStore::lastPoFor(WA_TEST_FROM, $sup)['unique_id'] === $bpo['unique_id'], 'the same completion again → no second PO');
+try { $ep('INIT'); $ok = false; } catch (WaFlowTokenError $e) { $ok = true; }
+wa_check($ok, 'after the PO, that form\'s button no longer opens it');
+$sent = $say('היי');
+$t2 = $sent[0]['interactive']['action']['parameters']['flow_token'] ?? '';
+wa_check($t2 !== $token && str_contains(wa_test_text($sent[0]), 'הזמנת רכש חדשה'), 'the next message → a new form for a new order');
+$sent = $say('עוד משהו');
+wa_check(($sent[0]['interactive']['action']['parameters']['flow_token'] ?? '') === $t2 && str_contains(wa_test_text($sent[0]), 'הטופס פתוח'),
+    'a message while a form is open → the same form again, cart kept');
+wa_check_limits($all, 'method B');
+
+// The Flow JSON itself: Meta's rules we can check here.
+$flow = json_decode((string) file_get_contents(__DIR__ . '/../whatsapp/flows/po_order.flow.json'), true);
+wa_check(is_array($flow) && $flow['version'] === '7.3', 'po_order.flow.json is valid JSON');
+$limits = ['TextInput' => 20, 'Dropdown' => 20, 'Footer' => 35, 'EmbeddedLink' => 25, 'OptIn' => 120, 'DatePicker' => 40];
+$errs = [];
+$ids = array_column($flow['screens'], 'id');
+foreach ($flow['screens'] as $s) {
+    foreach ($s['data'] ?? [] as $k => $f) if (!array_key_exists('__example__', $f)) $errs[] = "{$s['id']}.$k has no __example__";
+    $types = array_column($s['layout']['children'], 'type');
+    if (!empty($s['terminal']) && !in_array('Footer', $types, true)) $errs[] = "{$s['id']} terminal without Footer";
+    if (count(array_keys($types, 'EmbeddedLink')) > 2) $errs[] = "{$s['id']} more than 2 EmbeddedLinks";
+    foreach ($s['layout']['children'] as $c) {
+        $text = $c['label'] ?? $c['text'] ?? '';
+        if (isset($limits[$c['type']]) && !str_contains($text, '${') && mb_strlen($text) > $limits[$c['type']]) $errs[] = "{$s['id']} {$c['type']} \"{$text}\" > {$limits[$c['type']]}";
+        foreach ([$c['on-click-action'] ?? null] as $a) if ($a && $a['name'] === 'complete' && empty($s['terminal'])) $errs[] = "{$s['id']}: complete on a non-terminal screen";
+    }
+}
+foreach ($flow['routing_model'] as $from => $tos) foreach ($tos as $to) {
+    if (array_search($to, $ids, true) <= array_search($from, $ids, true)) $errs[] = "route $from → $to is not forward";
+}
+wa_check($errs === [], 'Flow JSON: labels within limits, data examples, forward routes only, terminal screen has a Footer', implode('; ', $errs));
+
 wa_test_done();

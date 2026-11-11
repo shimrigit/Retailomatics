@@ -1,0 +1,132 @@
+{
+  "version": "7.3",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "SUPPLIER": ["PRODUCTS"],
+    "PRODUCTS": ["CONFIRM"],
+    "CONFIRM": []
+  },
+  "screens": [
+    {
+      "id": "SUPPLIER",
+      "title": "הזמנת רכש — ספק",
+      "data": {
+        "intro": { "type": "string", "__example__": "בחרו ספק. הספקים שהזמנתם מהם לאחרונה — ראשונים ברשימה." },
+        "suppliers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          },
+          "__example__": [
+            { "id": "0", "title": "פנזה שש שיווק", "description": "הזמנתם לאחרונה" },
+            { "id": "1", "title": "אחים כהן" }
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextBody", "text": "${data.intro}" },
+          { "type": "Dropdown", "label": "ספק", "name": "supplier", "data-source": "${data.suppliers}", "required": true },
+          { "type": "OptIn", "label": "להתחיל מההזמנה הקודמת שלי לספק הזה", "name": "from_last" },
+          {
+            "type": "Footer",
+            "label": "המשך",
+            "on-click-action": {
+              "name": "data_exchange",
+              "payload": { "supplier": "${form.supplier}", "from_last": "${form.from_last}" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "PRODUCTS",
+      "title": "הזמנת רכש — מוצרים",
+      "refresh_on_back": true,
+      "data": {
+        "supplier": { "type": "string", "__example__": "ספק: פנזה שש שיווק" },
+        "cart_summary": { "type": "string", "__example__": "🛒 2 שורות · 120.00 ₪\n• קמח × 3\n• סוכר × 2" },
+        "hint": { "type": "string", "__example__": "חפשו מוצר לפי שם או ברקוד." },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          },
+          "__example__": [ { "id": "7290000000001", "title": "קמח לבן 1 ק\"ג", "description": "4.90 ₪ · 7290000000001" } ]
+        },
+        "has_results": { "type": "boolean", "__example__": true }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextSubheading", "text": "${data.supplier}" },
+          { "type": "TextBody", "text": "${data.cart_summary}" },
+          { "type": "TextCaption", "text": "${data.hint}" },
+          { "type": "TextInput", "label": "חיפוש מוצר", "name": "q", "input-type": "text", "required": false, "helper-text": "שם או ברקוד" },
+          { "type": "Dropdown", "label": "מוצר", "name": "item", "data-source": "${data.results}", "required": false, "visible": "${data.has_results}" },
+          { "type": "TextInput", "label": "כמות", "name": "qty", "input-type": "number", "required": false, "helper-text": "0 = הסרה מהעגלה" },
+          {
+            "type": "EmbeddedLink",
+            "text": "לסיכום ואישור ההזמנה",
+            "on-click-action": { "name": "data_exchange", "payload": { "cmd": "confirm" } }
+          },
+          {
+            "type": "Footer",
+            "label": "חפש / הוסף",
+            "on-click-action": {
+              "name": "data_exchange",
+              "payload": { "cmd": "go", "q": "${form.q}", "item": "${form.item}", "qty": "${form.qty}" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "CONFIRM",
+      "title": "הזמנת רכש — אישור",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "summary": { "type": "string", "__example__": "ספק: פנזה שש שיווק\n\n• קמח\n   3 × 4.90 ₪ = 14.70 ₪\n\nסה\"כ: 14.70 ₪ · 1 שורות" },
+        "min_date": { "type": "string", "__example__": "2026-11-11" },
+        "max_date": { "type": "string", "__example__": "2027-11-11" },
+        "default_date": { "type": "string", "__example__": "2026-11-12" },
+        "cart_ref": { "type": "string", "__example__": "a1b2c3d4e5f6" }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextBody", "text": "${data.summary}" },
+          {
+            "type": "DatePicker",
+            "label": "תאריך אספקה",
+            "name": "delivery",
+            "min-date": "${data.min_date}",
+            "max-date": "${data.max_date}",
+            "init-value": "${data.default_date}",
+            "required": true
+          },
+          {
+            "type": "Footer",
+            "label": "שלח הזמנה",
+            "on-click-action": {
+              "name": "complete",
+              "payload": { "delivery_date": "${form.delivery}", "cart_ref": "${data.cart_ref}" }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

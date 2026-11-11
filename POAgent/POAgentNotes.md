@@ -1665,3 +1665,39 @@ and after each add. Quantities are typed only — the [1][2][5] buttons are gone
 as a list (11+: numbered text), then a separate message with the [סיום והזמנה] button — a list
 message can carry no other button, and a "finish" row inside the list was hidden behind opening it.
 Tests 88/88.
+
+### Method C — set aside (Nov 11, 2026)
+Looked into WhatsApp's catalog + cart before building: up to 99 units per item, 30 products per
+message, every product must be uploaded to Meta's catalog (prices synced there, an image required,
+Meta's review and commerce policy), the cart lives on one device, no edit after sending. Built for
+retail, not purchase orders. Decision: build B first; C at the end only as a small demo to see it.
+
+### Phase 4 — method B: a WhatsApp Flow (Nov 11, 2026)
+- **`whatsapp/bench_b_flow.php`**: a message from a method-B phone → a Flow message ("פתח הזמנה",
+  `flow_action` data_exchange, `mode` from config). A message while one is open → the same form again.
+  Screens (`whatsapp/flows/po_order.flow.json`, Flow JSON 7.3, data API 3.0):
+  `SUPPLIER` (dropdown of all suppliers, recent first; "start from my previous order") →
+  `PRODUCTS` (cart summary; search box; dropdown of results — or of the cart's lines; quantity;
+  "חפש / הוסף" sets a line, 0 removes; "לסיכום ואישור"; refreshed on BACK) → `CONFIRM` (summary,
+  DatePicker, "שלח הזמנה" = complete). **Meta allows forward routes only**, so the spec's separate CART
+  screen became part of PRODUCTS. No 99-unit limit.
+- The cart is kept in the session; the PO is made from it when the completion (nfm_reply) arrives —
+  never from what the form sent. A second completion of the same order, or an old form's button, does
+  nothing (the token carries the order's ref).
+- **flow_token**: `b.` + base64url({phone, ref, exp 48 h}) + HMAC with mobile_link.php's secret.
+- **`whatsapp_app/flow_endpoint.php`** (public — added to the site .htaccess): Meta's signature (else
+  432), decrypt (else 421), ping → active, error notifications acknowledged, else
+  `poagent_bench_b_endpoint()`; a refused token → 427. Logs `whatsapp_app/logs/flow_*.log` (action,
+  screen, ms). **Apache turns a bare `http_response_code(432)` into 500** — sent with a reason phrase
+  (`wa_flow_status()`) it passes.
+- **`whatsapp_app/lib/FlowCrypto.php`**: RSA-OAEP SHA-256 through phpseclib 3 (already in vendor/ via
+  google/apiclient — not a direct composer requirement), AES-128-GCM, IV flipped in the reply. Keys in
+  `whatsapp_app/keys/` (gitignored). `WaClient::flow()` sends the message.
+- **`tools/flow_setup.php`** `keys | status | register | ping`.
+- Config (`whatsapp_app/config.json`): `flow_id_po_order`, `flow_mode` (draft / published).
+
+**Verified:** tests 119/119 (encryption round trip like Meta's, a wrong key refused, every screen and
+action, quantity 120, replace / remove, zero results, BACK, CONFIRM, the PO from the completion, no
+duplicate, old token refused, the Flow JSON against Meta's limits and routing rules); the real
+endpoint answers ping through Apache (~0.3 s) and through ngrok (~1.1 s); unsigned → 432, undecryptable
+→ 421. **Not yet:** public key registered at Meta, the Flow created in WhatsApp Manager, a phone test.

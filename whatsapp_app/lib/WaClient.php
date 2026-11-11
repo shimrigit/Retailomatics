@@ -154,6 +154,51 @@ class WaClient
         ]);
     }
 
+    /**
+     * Send a WhatsApp Flow — a message whose button ($cta, ≤30 chars) opens
+     * the Flow $flowId on the phone. $flowToken comes back in every endpoint
+     * request and in the completion (nfm_reply), identifying the user and the
+     * order. flow_action "data_exchange": opening it asks our endpoint
+     * (whatsapp_app/flow_endpoint.php, action INIT) for the first screen.
+     * $mode "draft" lets an unpublished Flow be tested.
+     */
+    public static function flow(
+        string $phoneNumberId,
+        string $to,
+        string $bodyText,
+        string $cta,
+        string $flowId,
+        string $flowToken,
+        string $mode = 'published',
+        ?string $footerText = null
+    ): bool {
+        $interactive = [
+            'type'   => 'flow',
+            'body'   => ['text' => $bodyText],
+            'action' => [
+                'name'       => 'flow',
+                'parameters' => [
+                    'flow_message_version' => '3',
+                    'flow_token'           => $flowToken,
+                    'flow_id'              => $flowId,
+                    'flow_cta'             => mb_substr($cta, 0, 30),
+                    'mode'                 => $mode,
+                    'flow_action'          => 'data_exchange',
+                ],
+            ],
+        ];
+        if ($footerText !== null && trim($footerText) !== '') {
+            $interactive['footer'] = ['text' => mb_substr(trim($footerText), 0, 60)];
+        }
+        return self::send($phoneNumberId, [
+            'messaging_product' => 'whatsapp',
+            'recipient_type'    => 'individual',
+            'to'                => $to,
+            'type'              => 'interactive',
+            'interactive'       => $interactive,
+        ]);
+    }
+
     // ── internals ───────────────────────────────────────────────────────────
 
     private static function send(string $phoneNumberId, array $payload): bool

@@ -290,7 +290,7 @@ function poagent_bench_b_products_screen(array $data, ?array $results = null, st
             $options[] = ['id' => $l['barcode'], 'title' => mb_substr($l['name'], 0, 30),
                 'description' => "בעגלה: {$l['qty']} × " . poagent_bench_ils($l['price_agorot'])];
         }
-        $hint = $lines ? 'לשינוי שורה: בחרו אותה וכתבו כמות (0 = הסרה). להוספה: חפשו מוצר.' : 'חפשו מוצר לפי שם או ברקוד.';
+        $hint = $lines ? 'לשינוי שורה: בחרו אותה וכתבו כמות (0 = הסרה). להוספה: חפשו מוצר.' : 'חפשו מוצר לפי שם, ברקוד מלא, או לפחות 6 הספרות האחרונות.';
     }
     $out = ['screen' => 'PRODUCTS', 'data' => [
         'supplier'     => "ספק: {$data['supplier']}",

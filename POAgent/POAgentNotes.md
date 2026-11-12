@@ -1740,3 +1740,11 @@ several pages, a "סיום" button. Method B waits for Meta's business verificat
 סיום, page 2 not a DN of its own, preocr, incoming cleared, two panels on the site, photo-first, PO
 number search, a PO waiting for OCR not offered, cancel, photo during an order, link users unchanged);
 a real single-page DN renders as before. **Not yet tried on a real phone.**
+
+**Search by the end of a barcode (Nov 12):** `CatalogIndex::searchItems()` — digits match the full
+barcode (leading zeros ignored) first, then barcodes **ending** with them when 6 digits or more (typed
+from a label), then names. Fewer than 6, or digits from the middle, don't match a barcode. Measured on
+the price lists: 2,535 of 4,148 items have codes of 6 digits or fewer (matched whole anyway); 75 share
+their last 6 digits with another item of the same supplier (→ a short list to tap). Prompts say "שם
+מוצר, ברקוד מלא, או לפחות 6 הספרות האחרונות". The "3*2" shortcut is no longer advertised (unclear);
+it still works. Tests 144/144.

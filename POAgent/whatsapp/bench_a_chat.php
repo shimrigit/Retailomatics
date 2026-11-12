@@ -226,7 +226,7 @@ function poagent_bench_a_order_again(array $ctx, array $data): void
 function poagent_bench_a_build_prompt(array $ctx, array $data, string $intro = ''): void
 {
     // ("3*2" — result 3, quantity 2 — still works, but isn't advertised: it confused more than it helped.)
-    $body = "{$intro}כתבו שם מוצר או ברקוד.";
+    $body = "{$intro}כתבו שם מוצר, ברקוד מלא, או לפחות 6 הספרות האחרונות של הברקוד.";
     if (poagent_bench_a_lines($data)[0]) {
         WaClient::buttons($ctx['pnid'], $ctx['from'], $body, POAGENT_BENCH_A_DONE_BUTTONS);
     } else {

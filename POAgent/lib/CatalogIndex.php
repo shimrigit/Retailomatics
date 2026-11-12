@@ -58,7 +58,8 @@ class CatalogIndex
 
     /**
      * A supplier's items matching $q, best first: [['barcode','name','price_agorot'], ...].
-     * A query of digits only that is a barcode in the list returns that item first.
+     * Digits: the item whose full barcode it is first, then those whose barcode ends
+     * with them (6 digits or more), then any name matches.
      */
     public static function searchItems(string $supplierId, string $q): array
     {
@@ -66,10 +67,17 @@ class CatalogIndex
         $qn = self::normalize($q);
         if ($qn === '') return [];
         $words = explode(' ', $qn);
+        // Digits: the full barcode (leading zeros ignored), or its end — at least the last 6
+        // digits, typed from a label. A code of 6 digits or fewer is matched whole.
         $digits = preg_match('/^\d{4,}$/', $qn) ? ltrim($qn, '0') : null;
+        $tail = preg_match('/^\d{6,}$/', $qn) ? $qn : null;
         $hits = [];
         foreach ($items as $it) {
-            $rank = $digits !== null && ltrim($it[0], '0') === $digits ? -1 : self::rank($it[3], $qn, $words);
+            $rank = match (true) {
+                $digits !== null && ltrim($it[0], '0') === $digits                                 => -2,
+                $tail !== null && strlen($it[0]) > strlen($tail) && str_ends_with($it[0], $tail) => -1,
+                default                                                                            => self::rank($it[3], $qn, $words),
+            };
             if ($rank !== null) $hits[] = [$rank, mb_strlen($it[1]), $it[1], $it];
         }
         usort($hits, fn($a, $b) => [$a[0], $a[1], $a[2]] <=> [$b[0], $b[1], $b[2]]);

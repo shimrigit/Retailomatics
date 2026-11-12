@@ -68,6 +68,26 @@ wa_check(($byBarcode[0]['barcode'] ?? '') === $it[0], "full barcode → that ite
 $two = CatalogIndex::searchItems($sup, "{$w[1]} {$w[0]}");
 wa_check(in_array($it[0], array_column($two, 'barcode'), true), "two words in another order (\"{$w[1]} {$w[0]}\") still find it");
 wa_check(CatalogIndex::item($sup, '000' . $it[0])['barcode'] === $it[0], 'item(): leading zeros ignored');
+// The end of a barcode: at least its last 6 digits.
+wa_check((CatalogIndex::searchItems($sup, substr($it[0], -6))[0]['barcode'] ?? '') === $it[0], 'the last 6 digits (' . substr($it[0], -6) . ') → that item first');
+wa_check((CatalogIndex::searchItems($sup, substr($it[0], -9))[0]['barcode'] ?? '') === $it[0], 'the last 9 digits → that item too');
+wa_check(!in_array($it[0], array_column(CatalogIndex::searchItems($sup, substr($it[0], -5)), 'barcode'), true), '5 digits are not a barcode end (too short)');
+wa_check(!in_array($it[0], array_column(CatalogIndex::searchItems($sup, substr($it[0], 2, 7)), 'barcode'), true), 'digits from the middle of a barcode don\'t match it');
+$pair = null;
+foreach ($indexData as $sName => $sData) {
+    $byTail = [];
+    foreach ($sData['items'] as $x) if (strlen($x[0]) > 6) $byTail[substr($x[0], -6)][] = $x[0];
+    foreach ($byTail as $t => $l) if (count($l) > 1) { $pair = [$sName, $t, $l]; break 2; }
+}
+if ($pair) {
+    $got = array_slice(array_column(CatalogIndex::searchItems($pair[0], $pair[1]), 'barcode'), 0, count($pair[2]));
+    wa_check(count(array_intersect($got, $pair[2])) === count($pair[2]), "two items ending in {$pair[1]} → both, first, to choose from");
+}
+$short = $shortSup = null;   // an item with a code of 4–6 digits, anywhere
+foreach ($indexData as $sName => $sData) {
+    foreach ($sData['items'] as $x) if (preg_match('/^\d{4,6}$/', $x[0])) { [$short, $shortSup] = [$x[0], $sName]; break 2; }
+}
+wa_check($short && (CatalogIndex::searchItems($shortSup, $short)[0]['barcode'] ?? '') === $short, "a short code ({$short}) is matched whole");
 $t = microtime(true);
 for ($i = 0; $i < 20; $i++) CatalogIndex::searchItems($sup, $w[0]);
 $ms = (microtime(true) - $t) / 20 * 1000;

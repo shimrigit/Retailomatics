@@ -225,7 +225,8 @@ function poagent_bench_a_order_again(array $ctx, array $data): void
 /** "Type a product"; with something in the cart, also the [סיום והזמנה] [הצג עגלה] buttons. */
 function poagent_bench_a_build_prompt(array $ctx, array $data, string $intro = ''): void
 {
-    $body = "{$intro}כתבו שם מוצר או ברקוד.\nמתוצאות החיפוש אפשר גם 3*2 (תוצאה 3, כמות 2).";
+    // ("3*2" — result 3, quantity 2 — still works, but isn't advertised: it confused more than it helped.)
+    $body = "{$intro}כתבו שם מוצר או ברקוד.";
     if (poagent_bench_a_lines($data)[0]) {
         WaClient::buttons($ctx['pnid'], $ctx['from'], $body, POAGENT_BENCH_A_DONE_BUTTONS);
     } else {

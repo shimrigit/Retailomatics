@@ -43,7 +43,7 @@ if (!defined('POAGENT_WA_LOG_DIR')) define('POAGENT_WA_LOG_DIR', __DIR__ . '/log
 // 'order' = a WhatsApp catalog cart (benchmark method C). image / document = a
 // delivery note photo — only for a phone on a benchmark method (dn_chat.php);
 // for everyone else they're ignored, as before.
-const POAGENT_WA_ACTIONABLE_TYPES = ['text', 'interactive', 'button', 'order', 'image', 'document'];
+const POAGENT_WA_ACTIONABLE_TYPES = ['text', 'interactive', 'button', 'order', 'image', 'document', 'audio'];
 
 // Idle sweep defaults; a benchmark conversation uses bench_common.php's longer ones.
 const POAGENT_WA_IDLE_REMINDER_AFTER_SECONDS = 300; // 5 minutes
@@ -91,7 +91,8 @@ function poagent_whatsapp_handle_event(array $event): void
     // method waits for a search / quantity, digits are that, not a code
     // (unless sent as "כניסה 123456", like the QR code does).
     $mode = poagent_access_wa_mode($from);
-    if ($mode === '' && in_array($type, ['image', 'document'], true)) {
+    // (audio = a dictated order: only a phone on method E.)
+    if (($mode === '' && in_array($type, ['image', 'document'], true)) || ($type === 'audio' && $mode !== 'e')) {
         poagent_whatsapp_log(['ts' => date('c'), 'event' => 'ignored_type', 'from' => $from, 'in_type' => $type]);
         return;
     }

@@ -1748,3 +1748,52 @@ the price lists: 2,535 of 4,148 items have codes of 6 digits or fewer (matched w
 their last 6 digits with another item of the same supplier (→ a short list to tap). Prompts say "שם
 מוצר, ברקוד מלא, או לפחות 6 הספרות האחרונות". The "3*2" shortcut is no longer advertised (unclear);
 it still works. Tests 144/144.
+
+### Method D — the order typed as a free list (Nov 15, 2026)
+
+A fourth choice in users.php ("שיטה D – רשימה חופשית"), added by request — not in the benchmark spec.
+`whatsapp/bench_d_list.php`; it is method A's conversation (`poagent_bench_a_handle($event, $name, "d")`:
+first question, supplier, "order again", cart, summary, PO) with a different way to fill the cart.
+`data.bench.mode` = `d` marks the order (measurement log, PO `source` = `wa_d`).
+
+- After the supplier: "write the order — a product per line, the quantity at the end of the line".
+- `poagent_bench_d_parse`: the quantity is a whole number 1–9999 at the end of the line
+  (`בצל 5`, `בצל - 5`, `בצל x5`, with or without "יח"); `קולה 1.5` has no quantity. Bullets / "1." dropped.
+- Each line → `CatalogIndex::searchItems` (`poagent_bench_d_match`; a name written exactly or a full
+  barcode is that product alone):
+  one product → the cart · 2 to 5 (`POAGENT_BENCH_D_MAX_OPTIONS`) → a conflict · more → "לא ברור איזה מוצר
+  נדרש — אנא רשמו פרטים נוספים" · none → "אין מוצר ברשימה שעונה על התיאור הזה" · no quantity → "חסרה כמות".
+- Conflicts (state `a_resolve`): all sent together, a message each (8 at a time) — what was written, the
+  options under it, and the products to tap: 2–3 options = reply buttons on screen (with 2, a [דלג] button
+  too), 4–5 = a list to open (WhatsApp allows 3 buttons) with a "דלג" row. Ids `pick:<k>:<barcode>` /
+  `skip:<k>`; tapped in any order, a second tap on a settled line says so. Typing the options' numbers
+  ("2 4") or "דלג" still works. (First version: one numbered text message — replaced, taps are simpler.)
+- Lines that did not go in are written again; a list is read in `a_build`, `a_resolve`, `a_confirm`.
+  One line without a quantity in `a_build` is method A's search.
+- Nothing open → method A's summary; [ערוך] → the cart (quantity / remove), typing adds.
+- Forgiving match (`CatalogIndex::searchItemsLoose`, used by method D only): after the plain search results,
+  products matched by stem at a word start — plural / singular (`stem()` drops ים, ות, ה, ת when 3+ letters
+  are left); and only when nothing was found at all, a one-letter slip (missing / extra / wrong) in a word
+  of 4+ letters. Digits alone get the plain search. Methods A and B still use the plain `searchItems`.
+  A voice message is planned as another way to give the same list.
+- Tests: `tests/wa_tests.php` section "Method D" (177 checks in all).
+
+### Method E — the order dictated in a voice message (Nov 15, 2026)
+
+A fifth choice in users.php ("שיטה E – הקלטה קולית"). `whatsapp/bench_e_voice.php` + `lib/VoiceOrder.php`.
+It is method D with one more way to give the list (`data.bench.mode` = `e`, PO `source` = `wa_e`).
+
+- After the supplier: "record a voice message with the order — a product and then its quantity".
+- `VoiceOrder::fromAudio`: two OpenAI calls with the key DNOcr uses (AIocr/config.json) — speech to
+  Hebrew text (`gpt-4o-transcribe`), then the text to `{product, qty}` lines (`gpt-4.1-mini`, JSON):
+  number words to digits, corrections applied ("לא, ארבע"), a size left in the name ("קולה 1.5").
+  Nothing is matched to the price list there — the lines go into `poagent_bench_d_list(…, $lines)`,
+  so the matching, conflicts, "no such product", "quantity missing" and the summary are method D's.
+- The bot first writes back what it understood ("🎙️ הבנתי: …"). The recording is not kept; the
+  transcript is in the WhatsApp log (`bench_e_voice`).
+- A recording is read once a supplier is chosen, at any point of the order (also among open
+  conflicts); typing a list works too. bot.php passes `audio` only for a phone on method E.
+- About 6 seconds for a 10-second recording (measured with a synthetic voice, Nov 15) — inside the
+  webhook request.
+- Tests: section "Method E" with `VoiceOrder::$fake` (191 checks in all); the OpenAI calls themselves
+  were tried once by hand with synthetic speech, not with a real WhatsApp recording.

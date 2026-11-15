@@ -72,9 +72,9 @@ function poagent_access_read(): array
 }
 
 // What the WhatsApp bot does for a phone (set in users.php): '' = sends the
-// login link (everyone, by default); 'a' / 'b' / 'c' = that benchmark method
+// login link (everyone, by default); 'a' / 'b' / 'c' / 'd' = that benchmark method
 // of ordering inside WhatsApp (whatsapp/bench_common.php) — for demos.
-const POAGENT_WA_MODES = ['' => 'קישור לאתר', 'a' => 'שיטה A – שיחה', 'b' => 'שיטה B – טופס', 'c' => 'שיטה C – קטלוג'];
+const POAGENT_WA_MODES = ['' => 'קישור לאתר', 'a' => 'שיטה A – שיחה', 'b' => 'שיטה B – טופס', 'c' => 'שיטה C – קטלוג', 'd' => 'שיטה D – רשימה חופשית', 'e' => 'שיטה E – הקלטה קולית'];
 
 function poagent_access_wa_mode(string $id): string
 {

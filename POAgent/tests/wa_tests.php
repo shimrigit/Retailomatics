@@ -491,4 +491,225 @@ foreach ($flow['routing_model'] as $from => $tos) foreach ($tos as $to) {
 }
 wa_check($errs === [], 'Flow JSON: labels within limits, data examples, forward routes only, terminal screen has a Footer', implode('; ', $errs));
 
+// ─────────────────────────────────────────────────────────────────────────────
+wa_test_section('Method D — the order typed as a free list');
+$p = poagent_bench_d_parse("בצל 5\n- מלפפון x12\n2. קולה 1.5 6\nעגבניה\n\nחלב - 3 יח'\nקולה 1.5\nגזר 0");
+wa_check(array_column($p, 'qty') === [5, 12, 6, null, 3, null, null] && $p[2]['text'] === 'קולה 1.5' && $p[1]['text'] === 'מלפפון' && $p[4]['text'] === 'חלב',
+    'parse: the quantity is the last number on the line; bullets dropped; "קולה 1.5" / no number / 0 = no quantity', json_encode($p, JSON_UNESCAPED_UNICODE));
+wa_check(poagent_bench_d_is_list("בצל 5") && poagent_bench_d_is_list("בצל\nגזר") && !poagent_bench_d_is_list('בצל') && !poagent_bench_d_is_list('קולה 1.5'),
+    'one line with a quantity, or several lines = a list; one line without = a search');
+// A supplier with a word that fits 2–5 products (a conflict), one that fits more, and a product of its own.
+$dSup = $amb = $amb2 = $wide = null;
+foreach (array_merge([$sup], $suppliers) as $s) {
+    $amb = $amb2 = $wide = null;
+    $seen = [];
+    foreach ($indexData[$s]['items'] as $row) {
+        foreach (explode(' ', $row[3]) as $w) {
+            if (mb_strlen($w) < 3 || ctype_digit($w) || isset($seen[$w])) continue;
+            $seen[$w] = true;
+            $n = count(poagent_bench_d_match($s, $w));
+            if ($n >= 2 && $n <= POAGENT_BENCH_D_MAX_OPTIONS) { if ($amb === null) $amb = $w; elseif ($amb2 === null) $amb2 = $w; }
+            if ($n > POAGENT_BENCH_D_MAX_OPTIONS && $wide === null) $wide = $w;
+        }
+    }
+    if ($amb !== null && $amb2 !== null && $wide !== null) { $dSup = $s; break; }
+}
+wa_check($dSup !== null, "a supplier with two conflict words and a too-wide one ({$dSup}: \"{$amb}\", \"{$amb2}\", \"{$wide}\")");
+$ambOpts = array_column(poagent_bench_d_match($dSup, $amb), 'barcode');
+$amb2Opts = array_column(poagent_bench_d_match($dSup, $amb2), 'barcode');
+foreach ($indexData[$dSup]['items'] as $one) if (!in_array($one[0], array_merge($ambOpts, $amb2Opts), true)) break;   // [barcode, name, ...] — by its barcode: one product
+
+// Forgiving search (CatalogIndex::searchItemsLoose): singular / plural, one letter off.
+$st = fn(string $w) => CatalogIndex::stem(CatalogIndex::normalize($w));
+wa_check($st('עגבניות') === $st('עגבניה') && $st('מלפפונים') === $st('מלפפון') && $st('שקיות') === $st('שקית') && $st('מים') === 'מימ',
+    'stem: plural and singular meet (עגבניות / עגבניה, מלפפונים / מלפפון); a short word is left whole');
+wa_check(CatalogIndex::searchItemsLoose($dSup, $one[0]) === CatalogIndex::searchItems($dSup, $one[0]), 'digits (a barcode): no forgiving, the same as the plain search');
+$slip = null;   // a word of a product's name with one letter left out, that the plain search does not find
+foreach ($indexData[$dSup]['items'] as $row) {
+    foreach (explode(' ', $row[3]) as $w) {
+        if (mb_strlen($w) < 6 || preg_match('/\d/', $w)) continue;
+        $typed = mb_substr($w, 0, 2) . mb_substr($w, 3);
+        if (CatalogIndex::searchItems($dSup, $typed) === []) { $slip = [$typed, $row[0], $w]; break 2; }
+    }
+}
+$loose = $slip ? array_column(CatalogIndex::searchItemsLoose($dSup, $slip[0]), 'barcode') : [];
+wa_check($slip !== null && in_array($slip[1], $loose, true), 'a letter left out ("' . ($slip[0] ?? '') . '" for "' . ($slip[2] ?? '') . '") still finds the product');
+$strictAmb = array_column(CatalogIndex::searchItems($dSup, $amb), 'barcode');
+wa_check(array_slice(array_column(CatalogIndex::searchItemsLoose($dSup, $amb), 'barcode'), 0, count($strictAmb)) === $strictAmb,
+    'what the plain search finds comes first, in its order');
+wa_check(CatalogIndex::searchItemsLoose($dSup, 'zzqqxx') === [], 'nonsense still finds nothing');
+
+poagent_access_set_wa_mode(WA_TEST_FROM, 'd');
+WaSessionStore::clear(WA_TEST_FROM);
+$all = [];
+$say('היי');
+$btn('menu_po');
+$sent = $say($dSup);
+if ($state() === 'a_supplier') {   // several suppliers by that name: tap ours
+    $i = array_search($dSup, wa_test_session()['data']['sup_map'], true);
+    $sent = $tap("sup:{$i}");
+}
+if ($state() === 'a_start') $sent = $btn('new');
+wa_check($state() === 'a_build' && str_contains(wa_test_text(end($sent)), 'מוצר בכל שורה'), 'the supplier chosen → "write the order — a product per line, the quantity at the end"');
+wa_check((wa_test_session()['data']['bench']['mode'] ?? '') === 'd', 'the attempt is measured as method D');
+
+// One list: a product of its own, two conflicts, a too-wide word, nonsense, a line with no quantity.
+$sent = $say("{$one[0]} 3\n{$amb} 5\n{$amb2} 2\n{$wide} 4\nzzqqxx 7\n{$amb}");
+$txt = implode("\n", array_map('wa_test_text', $sent));
+wa_check(($cart()[$one[0]] ?? 0) === 3 && str_contains($txt, 'נכנסו 1'), 'a line that fits one product → in the cart with its quantity');
+wa_check(str_contains($txt, 'לא ברור איזה מוצר נדרש') && str_contains($txt, "{$wide} 4"), 'more than ' . POAGENT_BENCH_D_MAX_OPTIONS . ' products → "not clear which product — write more details"');
+wa_check(str_contains($txt, 'אין מוצר ברשימה שעונה על התיאור הזה') && str_contains($txt, 'zzqqxx 7'), 'no product → "no product in the list fits this description"');
+wa_check(str_contains($txt, 'חסרה כמות'), 'a line with no number at the end → "the quantity is missing"');
+// Every id a reply can be tapped with (reply buttons and list rows), and the message carrying one.
+$tapIds = function (array $sent): array {
+    $ids = [];
+    foreach ($sent as $p) {
+        foreach ($p['interactive']['action']['buttons'] ?? [] as $b) $ids[] = $b['reply']['id'];
+        foreach ($p['interactive']['action']['sections'] ?? [] as $s) foreach ($s['rows'] as $r) $ids[] = $r['id'];
+    }
+    return $ids;
+};
+$ids = $tapIds($sent);
+$picks = array_values(array_filter($ids, fn($x) => str_starts_with($x, 'pick:')));
+$conflictMsgs = array_values(array_filter($sent, fn($p) => str_contains(wa_test_text($p), '* × ')));
+wa_check($state() === 'a_resolve' && count($conflictMsgs) === 2 && count($picks) === count($ambOpts) + count($amb2Opts)
+    && str_contains(wa_test_text($conflictMsgs[0]), "*{$amb}* × 5") && str_contains(wa_test_text($conflictMsgs[1]), "*{$amb2}* × 2"),
+    'both conflicts sent together, a message each: what was written, and under it the products to tap');
+$expect = count($ambOpts) <= 3 ? 'button' : 'list';
+wa_check(($conflictMsgs[0]['interactive']['type'] ?? '') === $expect,
+    count($ambOpts) . " options → a {$expect} message");
+wa_check(count(array_filter($ids, fn($x) => str_starts_with($x, 'skip:'))) >= 1 || str_contains($txt, 'כתבו: דלג'), 'a way to skip with each conflict');
+// A tap on a product of the first conflict.
+$firstPick = array_values(array_filter($picks, fn($x) => str_ends_with($x, ":{$ambOpts[0]}")))[0];
+$sent = $say(wa_test_tap($firstPick, '', $expect === 'button' ? 'button_reply' : 'list_reply'));
+wa_check(($cart()[$ambOpts[0]] ?? 0) === 5 && $state() === 'a_resolve' && str_contains(wa_test_text($sent[0]), 'נשארה שורה אחת'),
+    'a tap on a product → in the cart with the line\'s quantity; "one line left to choose"');
+$sent = $say(wa_test_tap($firstPick, '', 'button_reply'));
+wa_check(($cart()[$ambOpts[0]] ?? 0) === 5 && str_contains(wa_test_text($sent[0]), 'כבר טופלה'), 'the same tap again → "already done", nothing added twice');
+$sent = $say('99');
+wa_check($state() === 'a_resolve' && str_contains(wa_test_text($sent[0]), 'אין אפשרות מספר 99'), 'a number that is not an option → says so');
+$second = count($ambOpts) + 1;   // the first option of the second conflict — typed, instead of a tap
+$sent = $say("{$second}");
+$txt = implode("\n", array_map('wa_test_text', $sent));
+wa_check(($cart()[$amb2Opts[0]] ?? 0) === 2, "typing the option's number (\"{$second}\") works too", json_encode([$cart(), $ambOpts, $amb2Opts, $one[0], $state()]));
+wa_check($state() === 'a_build' && str_contains($txt, '3 שורות לא נכנסו') && str_contains($txt, 'סיום והזמנה'),
+    'lines still not in → "write them again", with the [סיום והזמנה] button', $txt);
+// Written again, now clear: nothing open → the summary.
+$sent = $say("{$one[1]} 4");
+$txt = implode("\n", array_map('wa_test_text', $sent));
+$oneBc = poagent_bench_d_match($dSup, $one[1]);
+wa_check(count($oneBc) > 1 || ($state() === 'a_confirm' && str_contains($txt, 'סיכום הזמנה') && str_contains($txt, 'אשר')),
+    'a list with nothing open → straight to the summary with [אשר] [ערוך] [בטל]');
+if ($state() === 'a_resolve') $say('1');
+wa_check($state() === 'a_confirm', 'in the summary');
+// From the summary: more lines, a conflict skipped, then editing through the cart.
+$sent = $say("{$amb} 9");
+$skipIds = array_values(array_filter($tapIds($sent), fn($x) => str_starts_with($x, 'skip:')));
+wa_check($state() === 'a_resolve' && count($sent) === 1 && str_contains(wa_test_text($sent[0]), 'שורה אחת מתאימה') && count($skipIds) === 1,
+    'a line typed at the summary is read too; one conflict = one message with its products and [דלג]');
+$before = $cart();
+$sent = $btn($skipIds[0]);
+wa_check($cart() === $before && $state() === 'a_confirm', '[דלג] → the line is dropped, back to the summary');
+$sent = $btn('edit');
+wa_check($state() === 'a_cart', '[ערוך] → the cart: quantities and products can be changed as in method A');
+$tap("cart:{$one[0]}");
+$btn('qtychg');
+$say('8');
+wa_check(($cart()[$one[0]] ?? 0) === 8, 'a quantity changed from the cart');
+$sent = $say($amb);   // one line, no quantity: method A's search
+wa_check($state() === 'a_build' && ($sent[0]['interactive']['type'] ?? '') === 'list', 'one product with no quantity → the search list, as in method A');
+$btn('done');
+$sent = $btn('yes');
+$po = POStore::listPOs()[0] ?? null;
+wa_check(str_contains(wa_test_text($sent[0]), 'נוצרה') && $lastLog()['mode'] === 'd' && $lastLog()['outcome'] === 'created',
+    '[אשר] → the PO is created; the measurement log says method D');
+// Cancelling in the middle of the conflicts.
+$say('היי');
+$btn('menu_po');
+$say($dSup);
+if ($state() === 'a_supplier') $tap('sup:' . array_search($dSup, wa_test_session()['data']['sup_map'], true));
+if ($state() === 'a_start') $btn('new');
+$say("{$amb} 2");
+$say('ביטול');
+$sent = $btn('cancel_no');
+wa_check($state() === 'a_resolve' && str_contains(wa_test_text($sent[0]), "*{$amb}*"), 'ביטול → [המשך הזמנה] in the middle of the conflicts → the conflicts again');
+$say('ביטול');
+$btn('cancel_yes');
+wa_check(empty(wa_test_session()['data']['pending']) && $state() === 'a_supplier', 'cancelled → a fresh order, no conflicts left over');
+wa_check_limits($all, 'method D');
+// Method A is as it was: a line ending with a number is a search there, not a list.
+poagent_access_set_wa_mode(WA_TEST_FROM, 'a');
+WaSessionStore::clear(WA_TEST_FROM);
+$say('היי');
+$btn('menu_po');
+$say($dSup);
+if ($state() === 'a_supplier') $tap('sup:' . array_search($dSup, wa_test_session()['data']['sup_map'], true));
+if ($state() === 'a_start') $btn('new');
+$sent = $say("{$amb} 5");
+wa_check(in_array($state(), ['a_build', 'a_qty'], true) && empty(wa_test_session()['data']['pending']) && $cart() === [], 'method A unchanged: "word 5" is a search there, not a list');
+wa_check($say(['type' => 'audio', 'audio' => ['id' => 'aud1', 'mime_type' => 'audio/ogg; codecs=opus', 'voice' => true]]) === [],
+    'a voice message from a phone that is not on method E: ignored, as before');
+
+// ─────────────────────────────────────────────────────────────────────────────
+wa_test_section('Method E — the order dictated in a voice message');
+poagent_access_set_wa_mode(WA_TEST_FROM, 'e');
+WaSessionStore::clear(WA_TEST_FROM);
+$all = [];
+WaClient::$fakeMedia['aud1'] = ['bytes' => 'OggS-fake', 'mime' => 'audio/ogg'];
+$heard = [];   // what the (faked) recording says
+VoiceOrder::$fake = function (string $bytes, string $mime) use (&$heard) {
+    if ($heard === 'fail') throw new RuntimeException('test: the service is down');
+    return $heard;
+};
+$voice = fn(string $id = 'aud1') => $say(['type' => 'audio', 'audio' => ['id' => $id, 'mime_type' => 'audio/ogg; codecs=opus', 'voice' => true]]);
+$say('היי');
+$sent = $voice();
+wa_check(str_contains(wa_test_text($sent[0]), 'בחרו "הזמנה חדשה" וספק') && $state() === 'a_menu', 'a recording before an order was started → "start an order and choose a supplier first"');
+$btn('menu_po');
+$sent = $voice();
+wa_check(str_contains(wa_test_text($sent[0]), 'קודם בחרו ספק') && $state() === 'a_supplier', 'a recording before the supplier → "choose a supplier first"');
+$say($dSup);
+if ($state() === 'a_supplier') $tap('sup:' . array_search($dSup, wa_test_session()['data']['sup_map'], true));
+$sent = $state() === 'a_start' ? $btn('new') : $sent;
+wa_check($state() === 'a_build' && str_contains(wa_test_text(end($sent)), 'הקליטו הודעה קולית'), 'the supplier chosen → "record a voice message with the order"');
+
+$heard = 'fail';
+$sent = $voice();
+wa_check(str_contains(wa_test_text($sent[0]), 'לא הצלחתי לפענח') && $state() === 'a_build', 'the transcription fails → "record again, or write the order"; the order stays open');
+$sent = $voice('no-such-media');
+wa_check(str_contains(wa_test_text($sent[0]), 'לא הצלחתי לקבל את ההקלטה'), 'the recording cannot be downloaded → says so');
+$heard = ['transcript' => 'אה שלום מה נשמע', 'lines' => []];
+$sent = $voice();
+wa_check(str_contains(wa_test_text($sent[0]), 'לא זיהיתי מוצרים') && str_contains(wa_test_text($sent[0]), 'אה שלום'), 'a recording with no products → what was heard, "record again"');
+
+// A real order: a product of its own, a conflict, nonsense, a product with no quantity.
+$heard = ['transcript' => 'x', 'lines' => [['text' => $one[1], 'qty' => 3], ['text' => $amb, 'qty' => 5], ['text' => 'zzqqxx', 'qty' => 7], ['text' => $amb2, 'qty' => null]]];
+$oneHits = poagent_bench_d_match($dSup, $one[1]);
+$sent = $voice();
+$txt = implode("\n", array_map('wa_test_text', $sent));
+wa_check(str_contains(wa_test_text($sent[0]), 'הבנתי') && str_contains(wa_test_text($sent[0]), "{$amb} — 5") && str_contains(wa_test_text($sent[0]), 'zzqqxx — 7'),
+    'the bot writes back what it understood, product and quantity per line');
+wa_check(count($oneHits) !== 1 || ($cart()[$oneHits[0]['barcode']] ?? 0) === 3, 'a dictated product that fits one product → in the cart');
+wa_check($state() === 'a_resolve' && str_contains($txt, "*{$amb}* × 5") && str_contains($txt, 'אין מוצר ברשימה') && str_contains($txt, 'חסרה כמות'),
+    'from there it is method D: the conflict to tap, "no such product", "the quantity is missing"');
+$pick = array_values(array_filter($tapIds($sent), fn($x) => str_ends_with($x, ":{$ambOpts[0]}")))[0];
+// Another recording in the middle of the conflicts is read too.
+$heard = ['transcript' => 'x', 'lines' => [['text' => $amb2, 'qty' => 2]]];
+$sent = $voice();
+wa_check($state() === 'a_resolve' && count(wa_test_session()['data']['pending']) >= 2, 'another recording while conflicts are open → its lines join them');
+$say(wa_test_tap($pick, '', 'button_reply'));
+wa_check(($cart()[$ambOpts[0]] ?? 0) === 5, 'a tap settles a dictated line');
+$say('דלג');
+$sent = $say("{$amb2} 1");   // typing works in method E as well
+wa_check($state() === 'a_resolve', 'a typed list is read in method E too');
+$say('דלג');
+if ($state() !== 'a_confirm') $btn('done');
+$sent = $btn('yes');
+wa_check(str_contains(wa_test_text($sent[0]), 'נוצרה') && $lastLog()['mode'] === 'e' && $lastLog()['outcome'] === 'created',
+    '[אשר] → the PO is created; the measurement log says method E');
+wa_check_limits($all, 'method E');
+VoiceOrder::$fake = null;
+poagent_access_set_wa_mode(WA_TEST_FROM, '');
+WaSessionStore::clear(WA_TEST_FROM);
+
 wa_test_done();

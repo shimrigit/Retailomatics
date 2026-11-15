@@ -29,7 +29,7 @@ const POAGENT_BENCH_A_MAX_QTY  = 9999;
 // Finishing is always a button, never a word to type.
 const POAGENT_BENCH_A_DONE_BUTTONS = [['id' => 'done', 'title' => 'סיום והזמנה'], ['id' => 'cart', 'title' => 'הצג עגלה']];
 
-function poagent_bench_a_handle(array $event, string $name): void
+function poagent_bench_a_handle(array $event, string $name, string $mode = 'a'): void
 {
     $ctx = ['from' => (string) $event['from'], 'pnid' => (string) ($event['business_phone_number_id'] ?? ''), 'name' => $name];
     $session = WaSessionStore::get($ctx['from']);
@@ -44,6 +44,15 @@ function poagent_bench_a_handle(array $event, string $name): void
         return;
     }
     $ordering = str_starts_with($state, 'a_') && !empty($data['bench']);
+    // A voice message: a dictated order (method E, bench_e_voice.php).
+    if (($event['type'] ?? '') === 'audio') {
+        if ($ordering ? poagent_bench_e_on($data) : $mode === 'e') {
+            poagent_bench_e_audio($ctx, $event, $data, $state, $ordering);
+        } else {
+            WaClient::text($ctx['pnid'], $ctx['from'], 'הודעות קוליות לא נקראות כאן. כתבו בבקשה.');
+        }
+        return;
+    }
     // A photo: a delivery note — unless an order is in progress.
     if (in_array($event['type'] ?? '', ['image', 'document'], true)) {
         if ($ordering) {
@@ -56,7 +65,7 @@ function poagent_bench_a_handle(array $event, string $name): void
     // Nothing in progress: the first question — a new order or a delivery note.
     if (!$ordering) {
         if ($state === 'a_menu' && ($id === 'menu_po' || in_array($text, ['הזמנה', 'הזמנה חדשה'], true))) {
-            $data = poagent_bench_a_new_order($data);   // the order's clock starts here
+            $data = poagent_bench_a_new_order($data, $mode);   // the order's clock starts here
             poagent_bench_note($data['bench'], $event);
             poagent_bench_a_ask_supplier($ctx, $data);
         } elseif ($state === 'a_menu' && ($id === 'menu_dn' || in_array($text, ['תעודה', 'תעודת משלוח'], true))) {
@@ -107,6 +116,9 @@ function poagent_bench_a_handle(array $event, string $name): void
         case 'a_cancel':
             poagent_bench_a_cancel_reply($ctx, $data, $event);
             return;
+        case 'a_resolve':   // method D: which product a written line meant
+            poagent_bench_d_resolve($ctx, $data, $event);
+            return;
         default:   // a_build
             poagent_bench_a_build($ctx, $data, $event);
     }
@@ -120,10 +132,12 @@ function poagent_bench_a_menu(array $ctx, array $data, string $name): void
     poagent_bench_save($ctx['from'], 'a_menu', $data, $ctx['pnid'], true);
 }
 
-function poagent_bench_a_new_order(array $data): array
+/** A fresh order. $mode: 'a', or 'd' (bench_d_list.php — the same conversation, the order typed as a list). */
+function poagent_bench_a_new_order(array $data, ?string $mode = null): array
 {
     $scenario = (string) ($data['scenario'] ?? '');
-    return ['scenario' => $scenario, 'bench' => poagent_bench_new('a', $scenario), 'cart' => []];
+    $mode ??= (string) ($data['bench']['mode'] ?? 'a');
+    return ['scenario' => $scenario, 'bench' => poagent_bench_new($mode, $scenario), 'cart' => []];
 }
 
 function poagent_bench_a_save(array $ctx, string $state, array $data): void
@@ -184,7 +198,7 @@ function poagent_bench_a_pick_supplier(array $ctx, array $data, string $supplier
     $data['supplier'] = $supplier;
     $data['cart'] = [];
     $data['results'] = [];
-    unset($data['sup_map']);
+    unset($data['sup_map'], $data['pending'], $data['resolve_map'], $data['fix']);
     $last = POStore::lastPoFor($ctx['from'], $supplier);
     if ($last && !empty($last['items'])) {
         $total = POStore::totalAgorot($last);
@@ -226,7 +240,11 @@ function poagent_bench_a_order_again(array $ctx, array $data): void
 function poagent_bench_a_build_prompt(array $ctx, array $data, string $intro = ''): void
 {
     // ("3*2" — result 3, quantity 2 — still works, but isn't advertised: it confused more than it helped.)
-    $body = "{$intro}כתבו שם מוצר, ברקוד מלא, או לפחות 6 הספרות האחרונות של הברקוד.";
+    $body = poagent_bench_e_on($data)
+        ? "{$intro}🎙️ הקליטו הודעה קולית עם ההזמנה — שם מוצר ואחריו כמות, מוצר אחרי מוצר. למשל:\n\"בצל חמש, מלפפון שתים עשרה\"\n\n(אפשר גם לכתוב: מוצר בכל שורה, והכמות בסוף השורה)"
+        : (poagent_bench_d_on($data)
+        ? "{$intro}כתבו את ההזמנה — מוצר בכל שורה, והכמות בסוף השורה. למשל:\nבצל 5\nמלפפון 12\n\n(מוצר: שם, ברקוד מלא, או לפחות 6 הספרות האחרונות של הברקוד)"
+        : "{$intro}כתבו שם מוצר, ברקוד מלא, או לפחות 6 הספרות האחרונות של הברקוד.");
     if (poagent_bench_a_lines($data)[0]) {
         WaClient::buttons($ctx['pnid'], $ctx['from'], $body, POAGENT_BENCH_A_DONE_BUTTONS);
     } else {
@@ -251,6 +269,8 @@ function poagent_bench_a_build(array $ctx, array $data, array $event): void
         poagent_bench_a_set_qty($ctx, $data, $results[(int) $m[1] - 1], (int) $m[2], false);
     } elseif (preg_match('/^\d{1,2}$/', $text) && (int) $text >= 1 && (int) $text <= count($results)) {
         poagent_bench_a_ask_qty($ctx, $data, $results[(int) $text - 1], false);
+    } elseif ($text !== '' && $id === '' && poagent_bench_d_on($data) && poagent_bench_d_is_list($text)) {
+        poagent_bench_d_list($ctx, $data, $text);   // method D: a typed list
     } elseif ($text !== '') {
         poagent_bench_a_item_search($ctx, $data, $text);
     } else {
@@ -489,6 +509,8 @@ function poagent_bench_a_confirm_reply(array $ctx, array $data, array $event): v
         }
         $data['delivery'] = $date;
         poagent_bench_a_confirm($ctx, $data);
+    } elseif ($id === '' && poagent_bench_d_on($data) && poagent_bench_d_is_list($text)) {
+        poagent_bench_d_list($ctx, $data, $text);   // method D: more lines after the summary
     } else {
         WaClient::buttons($ctx['pnid'], $ctx['from'], 'לאשר את ההזמנה? (אפשר גם לשלוח תאריך אספקה אחר, למשל ' . date('dmy', strtotime('+3 days')) . ')',
             [['id' => 'yes', 'title' => 'אשר'], ['id' => 'edit', 'title' => 'ערוך'], ['id' => 'no', 'title' => 'בטל']]);
@@ -499,7 +521,7 @@ function poagent_bench_a_confirm_reply(array $ctx, array $data, array $event): v
 function poagent_bench_a_commit(array $ctx, array $data): void
 {
     try {
-        $r = poagent_wa_commit_cart($ctx['from'], $ctx['name'], $data['supplier'], $data['cart'], $data['delivery'] ?? null, 'a');
+        $r = poagent_wa_commit_cart($ctx['from'], $ctx['name'], $data['supplier'], $data['cart'], $data['delivery'] ?? null, (string) ($data['bench']['mode'] ?? 'a'));
     } catch (Throwable $e) {
         poagent_whatsapp_log(['ts' => date('c'), 'event' => 'bench_a_po_failed', 'from' => $ctx['from'], 'error' => $e->getMessage()]);
         WaClient::text($ctx['pnid'], $ctx['from'], 'לא הצלחתי ליצור את ההזמנה. נסו שוב בעוד רגע, או כתבו *אתר* והזמינו באתר.');
@@ -545,7 +567,9 @@ function poagent_bench_a_cancel_reply(array $ctx, array $data, array $event): vo
         poagent_bench_a_ask_supplier($ctx, poagent_bench_a_new_order($data));
         return;
     }
-    if ($back === 'a_confirm') {
+    if ($back === 'a_resolve' && !empty($data['pending'])) {
+        poagent_bench_d_show_conflicts($ctx, $data);
+    } elseif ($back === 'a_confirm') {
         poagent_bench_a_confirm($ctx, $data);
     } elseif ($back === 'a_cart') {
         poagent_bench_a_show_cart($ctx, $data);

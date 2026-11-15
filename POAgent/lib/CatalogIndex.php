@@ -84,6 +84,88 @@ class CatalogIndex
         return array_map(fn($h) => self::item3($h[3]), $hits);
     }
 
+    /**
+     * searchItems, forgiving — for a product written from memory (the free list, method D):
+     *   1. what searchItems finds, in its order;
+     *   2. then singular / plural: every word matched by its stem at the start of a word ("עגבניות" finds "עגבניה", "בצלים" finds "בצל");
+     *   3. only when 1 and 2 found nothing: one letter missing, extra or wrong in a word of 4+ letters
+     *      ("מלפון" finds "מלפפון"), fewest slips first.
+     * Digits alone (a barcode) get searchItems only.
+     */
+    public static function searchItemsLoose(string $supplierId, string $q): array
+    {
+        $strict = self::searchItems($supplierId, $q);
+        $qn = self::normalize($q);
+        if ($qn === '' || preg_match('/^\d+$/', $qn)) return $strict;
+        $words = explode(' ', $qn);
+        $stems = array_map([self::class, 'stem'], $words);
+        $have = array_flip(array_column($strict, 'barcode'));
+        $byStem = $rest = [];
+        foreach (self::data()[$supplierId]['items'] ?? [] as $it) {
+            if (isset($have[$it[0]])) continue;
+            $all = true;
+            foreach ($stems as $s) {
+                if (!self::startsWord($it[3], $s)) { $all = false; break; }
+            }
+            if ($all) $byStem[] = [mb_strlen($it[1]), $it[1], $it]; else $rest[] = $it;
+        }
+        usort($byStem, fn($a, $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+        $out = array_merge($strict, array_map(fn($h) => self::item3($h[2]), $byStem));
+        if ($out) return $out;
+
+        $typo = [];
+        foreach ($rest as $it) {
+            $nameWords = explode(' ', $it[3]);
+            $slips = 0;
+            foreach ($words as $i => $w) {
+                if (self::startsWord($it[3], $stems[$i])) continue;
+                $near = false;
+                if (mb_strlen($w) >= 4 && !preg_match('/\d/', $w)) {
+                    foreach ($nameWords as $nw) {
+                        if (self::within1($w, $nw) || self::within1($stems[$i], self::stem($nw))) { $near = true; break; }
+                    }
+                }
+                if (!$near) continue 2;
+                $slips++;
+            }
+            $typo[] = [$slips, mb_strlen($it[1]), $it[1], $it];
+        }
+        usort($typo, fn($a, $b) => [$a[0], $a[1], $a[2]] <=> [$b[0], $b[1], $b[2]]);
+        return array_map(fn($h) => self::item3($h[3]), $typo);
+    }
+
+    /** A normalized Hebrew word without its plural / feminine ending (ים, ות, ה, ת) — when 3+ letters are left. */
+    public static function stem(string $w): string
+    {
+        if (preg_match('/\d/', $w)) return $w;
+        foreach (['ימ', 'ות', 'ה', 'ת'] as $end) {
+            if (str_ends_with($w, $end)) {
+                $s = mb_substr($w, 0, mb_strlen($w) - mb_strlen($end));
+                return mb_strlen($s) >= 3 ? $s : $w;
+            }
+        }
+        return $w;
+    }
+
+    /** Does a word of the (normalized) name start with $s? */
+    private static function startsWord(string $name, string $s): bool
+    {
+        return str_starts_with($name, $s) || str_contains($name, " " . $s);
+    }
+
+    /** Are two words the same but for one letter (missing, extra, or different)? */
+    private static function within1(string $a, string $b): bool
+    {
+        $x = mb_str_split($a);
+        $y = mb_str_split($b);
+        [$n, $m] = [count($x), count($y)];
+        if (abs($n - $m) > 1 || min($n, $m) < 4) return false;   // shorter words: one letter is too much of the word
+        $i = 0;
+        while ($i < $n && $i < $m && $x[$i] === $y[$i]) $i++;
+        if ($n === $m) return array_slice($x, $i + 1) === array_slice($y, $i + 1);
+        return $n > $m ? array_slice($x, $i + 1) === array_slice($y, $i) : array_slice($x, $i) === array_slice($y, $i + 1);
+    }
+
     /** One item of a supplier by barcode (leading zeros ignored), or null. */
     public static function item(string $supplierId, string $barcode): ?array
     {

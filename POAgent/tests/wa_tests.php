@@ -289,10 +289,15 @@ $btn('cancel_no');
 wa_check($state() === 'a_build' && count($cart()) === 1, '[המשך הזמנה] → back, cart kept');
 $say('ביטול');
 $sent = $btn('cancel_yes');
-wa_check(str_contains(wa_test_text($sent[0]), 'ההזמנה בוטלה') && $state() === 'a_supplier' && $cart() === [], '[כן, לבטל] → cancelled, a new order starts');
+wa_check(str_contains(wa_test_text($sent[0]), 'ההזמנה בוטלה') && $state() === 'a_done' && !empty(wa_test_session()['data']['idle']), '[כן, לבטל] → cancelled, the conversation is back at the start');
 wa_check($lastLog()['outcome'] === 'cancelled', 'measured as cancelled');
+$sent = $say('היי');
+wa_check($state() === 'a_menu' && str_contains(wa_test_text($sent[0]), 'תעודת משלוח'), 'the next message after a cancel → the first question: an order or a delivery note');
+$btn('menu_po');
 $sent = $say('ביטול');
-wa_check($state() === 'a_supplier' && $lastLog()['outcome'] === 'cancelled', 'ביטול with nothing chosen → just starts over (nothing logged)');
+wa_check($state() === 'a_cancel' && str_contains(wa_test_text($sent[0]), 'לבטל את ההזמנה?'), 'ביטול with nothing chosen yet → still asks "cancel the order?"');
+$btn('cancel_no');
+wa_check($state() === 'a_supplier', '[המשך הזמנה] → back to "which supplier?"');
 
 // Odd input
 $say($sup);
@@ -635,7 +640,7 @@ $sent = $btn('cancel_no');
 wa_check($state() === 'a_resolve' && str_contains(wa_test_text($sent[0]), "*{$amb}*"), 'ביטול → [המשך הזמנה] in the middle of the conflicts → the conflicts again');
 $say('ביטול');
 $btn('cancel_yes');
-wa_check(empty(wa_test_session()['data']['pending']) && $state() === 'a_supplier', 'cancelled → a fresh order, no conflicts left over');
+wa_check(empty(wa_test_session()['data']['pending']) && $state() === 'a_done', 'cancelled → back at the start, no conflicts left over');
 wa_check_limits($all, 'method D');
 // Method A is as it was: a line ending with a number is a search there, not a list.
 poagent_access_set_wa_mode(WA_TEST_FROM, 'a');
@@ -664,12 +669,26 @@ VoiceOrder::$fake = function (string $bytes, string $mime) use (&$heard) {
 $voice = fn(string $id = 'aud1') => $say(['type' => 'audio', 'audio' => ['id' => $id, 'mime_type' => 'audio/ogg; codecs=opus', 'voice' => true]]);
 $say('היי');
 $sent = $voice();
-wa_check(str_contains(wa_test_text($sent[0]), 'בחרו "הזמנה חדשה" וספק') && $state() === 'a_menu', 'a recording before an order was started → "start an order and choose a supplier first"');
-$btn('menu_po');
+wa_check(str_contains(wa_test_text($sent[0]), 'בחרו "הזמנה חדשה"') && $state() === 'a_menu', 'a recording before an order was started → "choose a new order first"');
+$sent = $btn('menu_po');
+wa_check(str_contains(wa_test_text($sent[0]), 'הקליטו את שם הספק'), '"which supplier?" in method E: record the name, or type it');
+// The supplier's name in a recording.
+$sent = $voice();   // nothing heard
+wa_check(str_contains(wa_test_text($sent[0]), 'לא הצלחתי לשמוע את שם הספק') && $state() === 'a_supplier', 'a recording with nothing heard → "record again, or type part of the name"');
+$heard = ['transcript' => 'זזקקקסס.'];
 $sent = $voice();
-wa_check(str_contains(wa_test_text($sent[0]), 'קודם בחרו ספק') && $state() === 'a_supplier', 'a recording before the supplier → "choose a supplier first"');
-$say($dSup);
-if ($state() === 'a_supplier') $tap('sup:' . array_search($dSup, wa_test_session()['data']['sup_map'], true));
+wa_check(str_contains(wa_test_text($sent[0]), 'שמעתי: זזקקקסס') && str_contains(wa_test_text($sent[1]), 'לא נמצא ספק') && $state() === 'a_supplier',
+    'a name that is no supplier → what was heard, "no such supplier"');
+// Heard with a letter missing in its longest word, and "הספק" in front: still that supplier.
+$nameWords = explode(' ', $dSup);
+usort($nameWords, fn($x, $y) => mb_strlen($y) <=> mb_strlen($x));
+$offName = str_replace($nameWords[0], mb_substr($nameWords[0], 0, 2) . mb_substr($nameWords[0], 3), $dSup);
+wa_check(CatalogIndex::searchSuppliers($offName) === [] && in_array($dSup, CatalogIndex::searchSuppliersLoose($offName), true),
+    "forgiving supplier search: \"{$offName}\" finds {$dSup} (the plain search does not)");
+$heard = ['transcript' => "הספק {$offName}."];
+$sent = $voice();
+if ($state() === 'a_supplier') $sent = $tap('sup:' . array_search($dSup, wa_test_session()['data']['sup_map'], true));
+wa_check((wa_test_session()['data']['supplier'] ?? '') === $dSup, 'the supplier\'s name in a recording, a letter off → that supplier is chosen');
 $sent = $state() === 'a_start' ? $btn('new') : $sent;
 wa_check($state() === 'a_build' && str_contains(wa_test_text(end($sent)), 'הקליטו הודעה קולית'), 'the supplier chosen → "record a voice message with the order"');
 

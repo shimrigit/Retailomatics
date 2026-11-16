@@ -46,8 +46,10 @@ PROMPT;
         return ['transcript' => $transcript, 'lines' => $transcript === '' ? [] : self::lines($transcript)];
     }
 
-    public static function transcribe(string $bytes, string $mime): string
+    /** Speech → Hebrew text. $about: a few words on what is being said (helps the recognition). */
+    public static function transcribe(string $bytes, string $mime, string $about = 'הזמנת סחורה מספק: שמות מוצרים וכמויות.'): string
     {
+        if (self::$fake !== null) return (string) ((self::$fake)($bytes, $mime)['transcript'] ?? '');
         $ext = match (true) {
             str_contains($mime, 'ogg') || str_contains($mime, 'opus') => 'ogg',
             str_contains($mime, 'mpeg') || str_contains($mime, 'mp3') => 'mp3',
@@ -59,7 +61,7 @@ PROMPT;
         $res = self::post('https://api.openai.com/v1/audio/transcriptions', [
             'model'    => self::TRANSCRIBE_MODEL,
             'language' => 'he',
-            'prompt'   => 'הזמנת סחורה מספק: שמות מוצרים וכמויות.',
+            'prompt'   => $about,
             'file'     => new CURLStringFile($bytes, "voice.{$ext}", explode(';', $mime)[0] ?: 'audio/ogg'),
         ], false);
         return trim((string) ($res['text'] ?? ''));

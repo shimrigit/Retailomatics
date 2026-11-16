@@ -19,7 +19,8 @@
  *   a_cart      the cart's lines to tap (11+: numbered text), then a separate [סיום והזמנה] message → a_line
  *   a_line      [שנה כמות] [הסר] [חזרה]
  *   a_confirm   summary + delivery date (a typed date like 151126 changes it) — [אשר] [ערוך] [בטל]
- *   a_cancel    "cancel the order?" — asked when ביטול / תפריט comes with something in the cart
+ *   a_cancel    "cancel the order?" — asked whenever ביטול / תפריט is typed; yes → parked, the next message
+ *               gets the first question again
  * After a PO the conversation is parked; the next message gets the first question again.
  * List row ids: sup:<index into data.sup_map> / item:<barcode> / cart:<barcode> — never a Hebrew name.
  */
@@ -149,14 +150,15 @@ function poagent_bench_a_save(array $ctx, string $state, array $data): void
 
 function poagent_bench_a_ask_supplier(array $ctx, array $data, string $intro = ''): void
 {
+    $how = poagent_bench_e_on($data) ? '🎙️ הקליטו את שם הספק, או כתבו חלק ממנו' : 'כתבו חלק משם הספק';
     $recent = array_values(array_filter(POStore::recentSuppliersFor($ctx['from'], POAGENT_BENCH_A_LIST_MAX), [CatalogIndex::class, 'exists']));
     if ($recent) {
         $data['sup_map'] = $recent;
-        WaClient::list($ctx['pnid'], $ctx['from'], "{$intro}איזה ספק?\nכתבו חלק משם הספק, או בחרו מהספקים האחרונים שלכם.",
+        WaClient::list($ctx['pnid'], $ctx['from'], "{$intro}איזה ספק?\n{$how}, או בחרו מהספקים האחרונים שלכם.",
             poagent_bench_a_supplier_rows($recent), 'ספקים אחרונים');
     } else {
         $data['sup_map'] = [];
-        WaClient::text($ctx['pnid'], $ctx['from'], "{$intro}איזה ספק? כתבו חלק משם הספק.");
+        WaClient::text($ctx['pnid'], $ctx['from'], "{$intro}איזה ספק? {$how}.");
     }
     poagent_bench_a_save($ctx, 'a_supplier', $data);
 }
@@ -170,10 +172,11 @@ function poagent_bench_a_supplier_rows(array $names): array
     return $rows;
 }
 
-function poagent_bench_a_supplier_search(array $ctx, array $data, string $q): void
+/** $loose: a name heard in a recording (method E) — words missing or a letter off are forgiven. */
+function poagent_bench_a_supplier_search(array $ctx, array $data, string $q, bool $loose = false): void
 {
     $data['bench']['searches']++;
-    $found = CatalogIndex::searchSuppliers($q);
+    $found = $loose ? CatalogIndex::searchSuppliersLoose($q) : CatalogIndex::searchSuppliers($q);
     if (!$found) {
         $data['bench']['zero_result_searches']++;
         WaClient::text($ctx['pnid'], $ctx['from'], "לא נמצא ספק בשם \"{$q}\". נסו חלק אחר של השם.");
@@ -544,10 +547,6 @@ function poagent_bench_a_commit(array $ctx, array $data): void
 
 function poagent_bench_a_ask_cancel(array $ctx, array $data, string $from): void
 {
-    if (empty($data['supplier']) && empty($data['cart'])) {   // nothing chosen yet: just start over
-        poagent_bench_a_ask_supplier($ctx, $data);
-        return;
-    }
     $data['cancel_from'] = $from;
     $n = count($data['cart'] ?? []);
     WaClient::buttons($ctx['pnid'], $ctx['from'], 'לבטל את ההזמנה?' . ($n ? " העגלה ({$n} שורות) תימחק." : ''),
@@ -563,8 +562,10 @@ function poagent_bench_a_cancel_reply(array $ctx, array $data, array $event): vo
     unset($data['cancel_from']);
     if ($id === 'cancel_yes' || in_array($text, ['כן', 'כן, לבטל', 'ביטול', 'בטל'], true)) {
         poagent_bench_finish($ctx['from'], $data['bench'], 'cancelled', null, count($data['cart'] ?? []));
-        WaClient::text($ctx['pnid'], $ctx['from'], 'ההזמנה בוטלה.');
-        poagent_bench_a_ask_supplier($ctx, poagent_bench_a_new_order($data));
+        // Back to the start: the next message gets the first question (an order or a delivery note).
+        WaClient::text($ctx['pnid'], $ctx['from'], "ההזמנה בוטלה.
+להזמנה חדשה או תעודת משלוח — שלחו הודעה.");
+        poagent_bench_save($ctx['from'], 'a_done', $data, $ctx['pnid'], true);
         return;
     }
     if ($back === 'a_resolve' && !empty($data['pending'])) {

@@ -57,6 +57,33 @@ class CatalogIndex
     }
 
     /**
+     * searchSuppliers, forgiving — for a name heard in a recording: what searchSuppliers finds;
+     * when it finds nothing, the suppliers matching the most words of $q, a word counting when
+     * the name has it or has a word one letter away from it (4+ letters). At least one word.
+     */
+    public static function searchSuppliersLoose(string $q): array
+    {
+        $strict = self::searchSuppliers($q);
+        if ($strict) return $strict;
+        $words = array_values(array_filter(explode(' ', self::normalize($q)), fn($w) => mb_strlen($w) >= 2));
+        $hits = [];
+        foreach (array_keys(self::data()) as $name) {
+            $nn = self::normalize($name);
+            $nameWords = explode(' ', $nn);
+            $score = 0;
+            foreach ($words as $w) {
+                if (mb_strpos($nn, $w) !== false) { $score += 2; continue; }
+                foreach ($nameWords as $nw) {
+                    if (self::within1($w, $nw)) { $score += 1; break; }
+                }
+            }
+            if ($score > 0) $hits[] = [-$score, mb_strlen($name), $name];
+        }
+        sort($hits);
+        return array_column(array_filter($hits, fn($h) => $h[0] === $hits[0][0]), 2);   // the best score only
+    }
+
+    /**
      * A supplier's items matching $q, best first: [['barcode','name','price_agorot'], ...].
      * Digits: the item whose full barcode it is first, then those whose barcode ends
      * with them (6 digits or more), then any name matches.

@@ -1797,3 +1797,9 @@ It is method D with one more way to give the list (`data.bench.mode` = `e`, PO `
   webhook request.
 - Tests: section "Method E" with `VoiceOrder::$fake` (191 checks in all); the OpenAI calls themselves
   were tried once by hand with synthetic speech, not with a real WhatsApp recording.
+- Nov 16: the supplier can be recorded too. At "איזה ספק?" (method E) a voice message is transcribed
+  (`VoiceOrder::transcribe`), "הספק" / "אני רוצה להזמין מ…" around the name dropped, and the name searched
+  with `CatalogIndex::searchSuppliersLoose` — the plain search, else the suppliers matching the most words,
+  a word one letter off counting. One → chosen, several → the list to tap. The bot writes "🎙️ שמעתי: …" first.
+- Nov 16: "ביטול" always asks "לבטל את ההזמנה?" (also before a supplier is chosen); after [כן, לבטל] the
+  conversation is parked — the next message gets the first question (order / delivery note). Methods A, D, E.

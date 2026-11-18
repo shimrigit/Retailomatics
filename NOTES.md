@@ -8,6 +8,30 @@
 
 ## Recent Updates (November 18, 2026)
 
+### NP per-shop options: "ללא סיווג למחלקות" and "שם מוצר לפי העדפת משתמש" (series module, step 1)
+
+First step of the user's spec (series pricing + two options); built in steps so each is tested on its own.
+- **Start screen** (`NPharmonized/index.php`): once a shop is picked, two checkboxes with that shop's last state; each change is saved at once (`shop_settings_api.php`) to `configDir/np_shop_settings.json` (`shop_settings.php`: `npShopSettings($shop)`). The stages read it by shop — nothing new travels through the forms or WaFetch.
+- **"שם מוצר לפי העדפת משתמש"** (stage 2, `stage_chpf.php`): after the CPD names, `name_style.php` `npStyleNames()` sends them (gpt-4.1, 40 per call) with the shop's `namePrompt` from the same JSON file — the AI only re-formats. Guard: a styled name must keep the same numbers as the original, else the usual name stays (counted on screen). The results table shows the usual name on hover. YBC's rule: no commas, brand after " - " ("פסטה ספגטי, 500 גרם, אסם" → "פסטה ספגטי 500 גרם - אסם"); YBC is set on. A shop without a `namePrompt` gets a warning and the usual names.
+- **"ללא סיווג למחלקות"** (stage 3, `stage_dcl.php`): no AI call, departments empty; the final screen has "סווג מחלקות עכשיו (AI)" (`dcl_classify.php`), which classifies the names as edited on the screen and fills the numbers for review. The button is also there when the shop is classified (re-classify after editing names). The AI call moved to `dcl_classify_lib.php` (same prompt/model).
+- **Verified:** YBC styling on 6 names (incl. multipack, no brand, NA); settings API (save, bad key refused); classification by function and over HTTP; the final screen on a copy of YBC's 17/11 file — skipped (0.2 s, 7 rows, empty departments) and normal (7/7 classified). Not yet run inside a full NP run.
+
+### Series module, step 2 (engine only): `Series/series_lib.php`
+
+Splits a Comax items export (columns פריט / שם פריט / ברקוד / מחיר מחירון 1; the "ספק" column is a distributor code, not the maker — unused) into series: same brand + same first word of the name + same unit and pack + size within ±5% of the series' first. Brand = the name's "-<brand>" ending (YBC: 71% of items); else CPD's manufacturer for the barcode, mapped to a name brand learned from items that have both (only a clear ≥60% / ≥2 mapping). No size in the name, or alone → not in a series. Series price = the most common price; more than one price = conflict. `seriesExportXlsx()` writes the check file (sheet סדרות, conflicts in red; sheet ללא סדרה with the reason).
+- **YBC 18/11 export (7,557 items):** 858 series holding 3,010 items, 422 with conflicts (mostly real differences, e.g. קולה זירו 6.90 / קלאסי 9.90 at 1 ליטר); 2,213 items have no size in the name, 2,330 have no similar item. 0.2 s.
+- **Tried and left off:** two-word lines when the first word is used under many brands (`SERIES_GENERIC_BRANDS`): conflicts 422→349 but it splits the user's own examples (פסטה אסם, ברילה, שמפו פינוק).
+- **Candidates for a new product** (`seriesCandidates()`, for the NP final screen): every series of the same brand + line whose sizes fit ±5% (a product without a size: every such series), plus every single item of the same brand + line whose size fits or that has no size — the user's rule: a single item is an option too (join a series / open a new series with it / own price). Several candidates are normal (sub-series after a split, single items); the user picks, ranked by size fit then name similarity. Tested by holding out YBC items (פינוק שמפו → פינוק 700 מ"ל 24.90; מעדן מילקי without a size → three מעדן series + single מילקי items) and on made-up new products.
+- Size parsing also reads `מ''ל` (two apostrophes): +58 items with a size (866 series, 3,058 items, 425 conflicts).
+- **Screen** http://localhost/website/Series/ (local only, like WaFetch): shops with their last split date or "ללא חלוקה לסדרות", the newest Gateway download (and "הורדה חדשה שעוד לא חולקה"), "חלק לסדרות" / "עדכן חלוקה", "פתח", "ייצוא לאקסל". `view.php`: tabs קונפליקטים / נפתרו-נערכו / כל הסדרות / שינויים מהחלוקה הקודמת; a card per series: per item "הסדרה" / A–J / "לא מסדרה" and a price-fix field, saved per card (`save.php`); the card head shows each sub-series' price or its conflict.
+- **Storage** (agreed with the Gateway session): `{shop}\ProductsList\Series\` — `series.json` (the split + decisions per barcode, so a re-split keeps them; a price fix Comax already shows is dropped), `History\` (the previous series.json on each re-split), `series_<date>.xlsx` (exports), `price_fixes.json` for the Gateway: `{"shop","updated","fixes":[{"barcode","code","name","oldPrice","newPrice","created"}]}`, rewritten after every save. Nothing is written into ProductsList itself (the Gateway moves "רשימת מוצרים ומחירים*.xlsx" there to Old). Times in Asia/Jerusalem (PHP's default here is Berlin).
+- **Verified on YBC (the Gateway's 18/11 download):** split over HTTP (~12 s with CPD), 866 series / 425 conflicts, view 0.1 s; save of the Barilla 500 g card (14.90s → A, 17.90 fixed to 14.90 → price_fixes.json), a non-price refused with a message, export with decisions, restore; re-split kept the decision and wrote History. Left clean (no decisions).
+- Not built yet: the conflict screen (A–J / לא מסדרה / price fix), re-split diffs, the NP final-screen pricing.
+
+### Comax Gateway (RetailAgents/Playwright/PlaywrightDemo): the dashboard lists the last 10 runs
+
+`MAX_JOBS_LISTED` in `gateway/server.js` 50 → 10 — only the list; older runs stay in `runs\` (log and files). A running or queued job is always among the newest, so the dashboard's activity refresh is unaffected. Takes effect when the Gateway is restarted (`start_gateway.bat`).
+
 ### CPD: three more chains (fewer products CPD misses)
 
 **Why:** products that CPD lacked but CHP showed at Netiv HaHesed and Wolt Market.

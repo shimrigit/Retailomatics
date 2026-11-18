@@ -2,6 +2,9 @@
 $shopsConfig = json_decode(file_get_contents(__DIR__ . '/../configDir/shops_V2.json'), true) ?? [];
 $shopNames   = array_column($shopsConfig, 'ShopName');
 sort($shopNames);
+require_once __DIR__ . '/shop_settings.php';
+$shopSettings = [];
+foreach ($shopNames as $s) $shopSettings[$s] = npShopSettings($s);
 $today = date('Y-m-d');
 ?>
 <!DOCTYPE html>
@@ -26,6 +29,11 @@ $today = date('Y-m-d');
         .switch-opt input[type="radio"] { display: none; }
         .switch-opt label { display: block; margin: 0; padding: 15px; text-align: center; border: 2px solid #ccc; border-radius: 8px; background: #fafafa; font-size: 20px; font-weight: bold; color: #555; cursor: pointer; }
         .switch-opt input[type="radio"]:checked + label { border-color: #2575a8; background: #e8f1f8; color: #2575a8; }
+        .shop-opts { display: none; background: #f7fafc; border: 1px solid #d6e4ef; border-radius: 8px; padding: 14px 18px; margin: -14px 0 30px; }
+        .shop-opts label.chk { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 20px; cursor: pointer; }
+        .shop-opts input[type="checkbox"] { width: 22px; height: 22px; }
+        .opt-note { font-size: 15px; color: #888; margin: 0 32px 8px 0; }
+        .opt-saved { font-size: 15px; color: #2a7d2a; min-height: 18px; }
     </style>
 </head>
 <body>
@@ -43,6 +51,14 @@ $today = date('Y-m-d');
                 <option value="<?= htmlspecialchars($s) ?>"><?= htmlspecialchars($s) ?></option>
             <?php endforeach; ?>
         </select>
+
+        <div class="shop-opts" id="shopOpts">
+            <label class="chk"><input type="checkbox" id="opt_noDeptClassify" data-key="noDeptClassify"> ללא סיווג למחלקות</label>
+            <div class="opt-note">הסיווג אפשרי ידנית במסך הסופי</div>
+            <label class="chk"><input type="checkbox" id="opt_customName" data-key="customName"> שם מוצר לפי העדפת משתמש</label>
+            <div class="opt-note" id="nameNote"></div>
+            <div class="opt-saved" id="optSaved"></div>
+        </div>
 
         <label for="root_letter">אות כונן ראשי</label>
         <input type="text" class="letter" id="root_letter" name="root_letter" value="Z" maxlength="1" required>
@@ -82,6 +98,41 @@ $today = date('Y-m-d');
     </form>
 </div>
 <script>
+// Per-shop options (shop_settings.php): shown once a shop is picked, with its
+// last state; each change is saved at once, and the stages read it by shop.
+var SHOP_SETTINGS = <?= json_encode($shopSettings, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?>;
+var shopSel = document.getElementById('shop');
+function showShopOpts() {
+    var shop = shopSel.value, s = SHOP_SETTINGS[shop] || {};
+    document.getElementById('shopOpts').style.display = shop ? 'block' : 'none';
+    document.getElementById('opt_noDeptClassify').checked = !!s.noDeptClassify;
+    document.getElementById('opt_customName').checked = !!s.customName;
+    document.getElementById('nameNote').textContent = s.namePrompt
+        ? 'הכלל: ' + s.namePrompt
+        : 'לחנות זו אין עדיין כלל שמות (configDir/np_shop_settings.json, namePrompt) — השם יישאר בסגנון הרגיל';
+    document.getElementById('optSaved').textContent = '';
+}
+shopSel.addEventListener('change', showShopOpts);
+document.querySelectorAll('#shopOpts input[type="checkbox"]').forEach(function (box) {
+    box.addEventListener('change', function () {
+        var shop = shopSel.value, key = box.dataset.key, saved = document.getElementById('optSaved');
+        var body = new URLSearchParams({ shop: shop, key: key, value: box.checked ? '1' : '0' });
+        fetch('shop_settings_api.php', { method: 'POST', body: body })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (!j.ok) throw new Error(j.error || 'error');
+                SHOP_SETTINGS[shop] = j.settings;
+                saved.style.color = '#2a7d2a';
+                saved.textContent = '✓ נשמר ל-' + shop;
+            })
+            .catch(function (e) {
+                saved.style.color = '#c0392b';
+                saved.textContent = '✘ השמירה נכשלה: ' + e.message;
+            });
+    });
+});
+showShopOpts();
+
 // "WhatsApp — download from a group" goes through WaFetch first (step 1:
 // download the images), which then continues to confirm.php; the other two
 // go straight to confirm.php. harvest_mode stays "whatsapp" for both

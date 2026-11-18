@@ -5,6 +5,8 @@ require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/xlsx_retry.php';
 require_once __DIR__ . '/flow_mode.php';
 require_once __DIR__ . '/shop_city.php';
+require_once __DIR__ . '/shop_settings.php';
+require_once __DIR__ . '/name_style.php';
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
@@ -217,6 +219,27 @@ foreach ($barcodes as $idx => $item) {
 
     $results[] = array_merge(['row' => $item['row'], 'inputBarcode' => $item['barcode'], 'salePrice' => $item['salePrice']], $parsed);
 }
+
+// ── Names in the shop's own style (start screen: "שם מוצר לפי העדפת משתמש") ────
+$shopOpts = npShopSettings($shop);
+if ($shopOpts['customName'] && trim($shopOpts['namePrompt']) !== '' && $results) {
+    echo '<p class="pl" id="pstyle">מעביר שמות לסגנון של ' . htmlspecialchars($shop) . '...</p>';
+    sf();
+    $styled = npStyleNames(array_column($results, 'hebrewName'), $shopOpts['namePrompt']);
+    foreach ($results as $i => &$r) {
+        $r['baseName']   = $r['hebrewName'];
+        $r['hebrewName'] = $styled['names'][$i];
+    }
+    unset($r);
+    $done = count(array_filter($results, fn($r) => $r['hebrewName'] !== 'NA')) - count($styled['kept']);
+    $msg  = '✔ שמות בסגנון ' . $shop . ': ' . $done . ($styled['kept'] ? ' · ' . count($styled['kept']) . ' נשארו בסגנון הרגיל' : '')
+          . ($styled['error'] ? ' — ⚠ ' . $styled['error'] : '');
+    echo '<script>var el = document.getElementById("pstyle"); el.className = "pl ' . ($styled['error'] ? 'err' : 'done') . '"; el.textContent = '
+        . json_encode($msg, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) . ';</script>';
+    sf();
+} elseif ($shopOpts['customName']) {
+    echo '<p class="pl err">⚠ "שם מוצר לפי העדפת משתמש" מסומן, אבל לחנות אין כלל שמות (namePrompt ב-configDir/np_shop_settings.json) — השמות בסגנון הרגיל</p>';
+}
 ?>
 </div>
 
@@ -296,7 +319,7 @@ function priceStatus($r) {
     <tr>
         <td><?= $idx + 1 ?></td>
         <td><?= htmlspecialchars($r['inputBarcode']) ?></td>
-        <td><?= htmlspecialchars($r['hebrewName']) ?></td>
+        <td<?= isset($r['baseName']) && $r['baseName'] !== $r['hebrewName'] ? ' title="' . htmlspecialchars('בסגנון הרגיל: ' . $r['baseName']) . '"' : '' ?>><?= htmlspecialchars($r['hebrewName']) ?></td>
         <td><?= htmlspecialchars($r['returnedBarcode']) ?></td>
         <td><?= htmlspecialchars($r['maxPrice']) ?></td>
         <td><?= htmlspecialchars($r['minPrice']) ?></td>

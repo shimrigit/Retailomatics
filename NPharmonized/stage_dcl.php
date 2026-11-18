@@ -5,6 +5,8 @@ require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/barcode_validate.php';
 require_once __DIR__ . '/xlsx_retry.php';
 require_once __DIR__ . '/flow_mode.php';
+require_once __DIR__ . '/shop_settings.php';
+require_once __DIR__ . '/dcl_classify_lib.php';
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['np_dir'])) {
@@ -82,79 +84,17 @@ $statusLabel = [
 ];
 $statusClass = ['ok' => 'st-ok', 'above' => 'st-bad', 'below' => 'st-bad', 'na' => 'st-na'];
 
-// ── Load OpenAI key ───────────────────────────────────────────────────────────
-$config = json_decode(file_get_contents(__DIR__ . '/../AIocr/config.json'), true);
-$apiKey = $config['openai_api_key'] ?? null;
-if (empty($apiKey)) die('Error: OpenAI API key not configured.');
-
-// ── Build prompt ──────────────────────────────────────────────────────────────
-$productList = implode("\n", array_map(fn($i, $p) => ($i + 1) . '. ' . $p['name'], array_keys($products), $products));
-$deptList    = implode("\n", array_map(fn($i, $n) => ($i + 1) . '. ' . $n,          array_keys($deptNames), $deptNames));
-
-$systemPrompt = <<<PROMPT
-You are a supermarket product classification assistant.
-You will receive a numbered list of products and a numbered list of supermarket departments.
-Classify each product into the single most appropriate department.
-
-Rules:
-- The "department" field MUST exactly match one of the provided department names (copy verbatim).
-- Maintain the same order as the input product list.
-- For "note", write a very short reason (one sentence max).
-
-Return ONLY valid JSON:
-{"classifications": [{"index": 1, "product": "...", "department": "...", "note": "..."}, ...]}
-PROMPT;
-
-// ── Call OpenAI ───────────────────────────────────────────────────────────────
-$payload = [
-    'model'           => 'gpt-4.1-mini',
-    'messages'        => [
-        ['role' => 'system', 'content' => $systemPrompt],
-        ['role' => 'user',   'content' => "Departments:\n{$deptList}\n\nProducts to classify:\n{$productList}"],
-    ],
-    'max_tokens'      => 4000,
-    'temperature'     => 0.0,
-    'response_format' => ['type' => 'json_object'],
-];
-
-$ch = curl_init('https://api.openai.com/v1/chat/completions');
-curl_setopt_array($ch, [
-    CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_TIMEOUT => 120,
-    CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Authorization: Bearer ' . $apiKey],
-    CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_UNICODE),
-]);
-$response = curl_exec($ch);
-$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
-
-if (!$response || $httpCode !== 200) {
-    $err = json_decode($response, true);
-    die('<p style="color:red;font-family:Arial;font-size:22px;padding:30px">שגיאת OpenAI: ' . htmlspecialchars($err['error']['message'] ?? 'HTTP ' . $httpCode) . '</p>');
+// ── Classify (skipped for a shop with "ללא סיווג למחלקות" — the button below does it by hand) ──
+$shopOpts   = npShopSettings($shop);
+$skipDcl    = $shopOpts['noDeptClassify'];
+$clByRow    = [];   // row => [department, note] (nothing is written to the file yet)
+$usage      = [];
+if (!$skipDcl) {
+    $cl = npClassifyDepartments(array_column($products, 'name'), $deptNames);
+    if ($cl['error']) die('<p style="color:red;font-family:Arial;font-size:22px;padding:30px">' . htmlspecialchars($cl['error']) . '</p>');
+    $usage = $cl['usage'];
+    foreach ($cl['byIndex'] as $idx => $c) $clByRow[$products[$idx]['row']] = $c;
 }
-
-$result  = json_decode($response, true);
-$content = $result['choices'][0]['message']['content'] ?? null;
-$aiData  = json_decode($content, true);
-
-if (json_last_error() !== JSON_ERROR_NONE || !isset($aiData['classifications'])) {
-    die('<p style="color:red;font-family:Arial;font-size:22px;padding:30px">שגיאה בניתוח תשובת OpenAI.</p>');
-}
-
-$classifications = $aiData['classifications'];
-$usage           = $result['usage'] ?? [];
-
-// ── Classification lookup by row (nothing is written to the file yet) ─────────
-$clByRow = [];
-foreach ($classifications as $cl) {
-    $idx = (int)($cl['index'] ?? 0) - 1;
-    if (!isset($products[$idx])) continue;
-    $row = $products[$idx]['row'];
-    $clByRow[$row] = [
-        'department' => $cl['department'] ?? '',
-        'note'       => $cl['note'] ?? '',
-    ];
-}
-
 // ── Unified per-row data for the editable review screen ──────────────────────
 $finalRows = [];
 foreach ($products as $p) {
@@ -244,6 +184,9 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
         .zoom-btns { margin-top: 8px; display: flex; gap: 8px; }
         .zoom-btns button { padding: 6px 18px; font-size: 22px; font-weight: bold; border: 1px solid #bbb; border-radius: 6px; background: #f0f0f0; cursor: pointer; line-height: 1; }
         .zoom-btns button:hover { background: #ddd; }
+        .dcl-box { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 12px 20px; margin-bottom: 18px; font-size: 19px; color: #7a5800; }
+        .btn-dcl { padding: 10px 26px; background: #2575a8; color: #fff; border: none; border-radius: 6px; font-size: 19px; cursor: pointer; }
+        .btn-dcl:disabled { background: #999; cursor: wait; }
     </style>
 </head>
 <body>
@@ -262,6 +205,16 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
 
 <div class="layout">
 <div class="main-col">
+
+<div class="dcl-box" id="dclBox">
+    <?php if ($skipDcl): ?>
+    <span>לחנות זו מסומן "ללא סיווג למחלקות" — המחלקות לא סווגו.</span>
+    <?php else: ?>
+    <span>המחלקות סווגו אוטומטית. אפשר לסווג מחדש לפי השמות שבטבלה עכשיו:</span>
+    <?php endif; ?>
+    <button type="button" class="btn-dcl" id="btnDcl" onclick="classifyNow()">סווג מחלקות עכשיו (AI)</button>
+    <span id="dclMsg"></span>
+</div>
 
 <form action="stage_dcl_save.php" method="post">
     <input type="hidden" name="np_dir"    value="<?= htmlspecialchars($npDir) ?>">
@@ -295,7 +248,7 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
             <th>הערת AI</th>
         </tr>
         <?php foreach ($finalRows as $i => $r): ?>
-        <tr>
+        <tr data-row="<?= $r['row'] ?>">
             <td><?= $i + 1 ?></td>
             <td>
                 <input class="edit" type="text" name="barcode[<?= $r['row'] ?>]" value="<?= htmlspecialchars($r['barcode']) ?>"
@@ -312,7 +265,7 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
                        data-row="<?= $r['row'] ?>" oninput="syncDeptName(this)">
             </td>
             <td class="dept-name-cell" id="deptname-<?= $r['row'] ?>"><?= htmlspecialchars($r['deptName'] ?: '—') ?></td>
-            <td class="note-cell"><?= htmlspecialchars($r['note']) ?></td>
+            <td class="note-cell" id="note-<?= $r['row'] ?>"><?= htmlspecialchars($r['note']) ?></td>
         </tr>
         <?php endforeach; ?>
     </table>
@@ -414,6 +367,33 @@ function zoom(id, f) {
 }
 
 const NUM_TO_NAME = <?= json_encode($numToName, JSON_UNESCAPED_UNICODE) ?>;
+
+// Classifies the names as they are in the table now (dcl_classify.php) and
+// fills the department numbers; the user still reviews them before saving.
+function classifyNow() {
+    var btn = document.getElementById('btnDcl'), msg = document.getElementById('dclMsg');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('tr[data-row]'));
+    var body = new URLSearchParams();
+    body.append('dept_file', <?= json_encode($deptFile, JSON_UNESCAPED_UNICODE) ?>);
+    rows.forEach(function (tr) { body.append('names[]', tr.querySelector('input[name^="name["]').value); });
+    btn.disabled = true;
+    msg.textContent = 'מסווג ' + rows.length + ' מוצרים...';
+    fetch('dcl_classify.php', { method: 'POST', body: body })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+            if (!j.ok) throw new Error(j.error || 'error');
+            rows.forEach(function (tr, i) {
+                var it = j.items[i] || {}, row = tr.dataset.row;
+                var input = tr.querySelector('input[name^="deptnum["]');
+                input.value = it.deptNum || '';
+                syncDeptName(input);
+                document.getElementById('note-' + row).textContent = it.note || '';
+            });
+            msg.textContent = '✓ סווגו ' + j.items.filter(function (it) { return it.deptNum; }).length + ' מתוך ' + rows.length + ' — בדוק ושמור';
+        })
+        .catch(function (e) { msg.textContent = '✘ ' + e.message; })
+        .finally(function () { btn.disabled = false; });
+}
 
 function syncDeptName(input) {
     var row  = input.dataset.row;

@@ -1,10 +1,101 @@
 # OCR Subproject Documentation
 
 **Project Location:** `C:\xampp\htdocs\website`
-**Last Updated:** November 8, 2026
+**Last Updated:** November 18, 2026
 **Status:** Phase 1 Complete - Ready for Commercial Layer
 
 ---
+
+## Recent Updates (November 18, 2026)
+
+### CPD: three more chains (fewer products CPD misses)
+
+**Why:** products that CPD lacked but CHP showed at Netiv HaHesed and Wolt Market.
+
+**What** (`C:\RetailAgents\PriceTransparency`): `chains.json` + a `wolt` adapter in `portals.js`
+(public site, no login: `wm-gateway.wolt.com/isr-prices/public/v1`, a page per day; a store missing
+from the newest day is looked up up to a week back).
+- **וולט מרקט** — 8 stores (6 Tel Aviv, 2 Jerusalem; the test venue / CLOSED excluded).
+- **דור אלון (AM:PM, אלונית)** — 32 stores (31 Tel Aviv), Cerberus user `doralon`.
+- **מחסני השוק** — 12 stores (Jerusalem), Laib catalog.
+- Distinct barcodes with a price: 77,077 → 85,301 (+8.2k: Wolt 1.9k, Dor Alon 1.5k, Mahsanei HaShuk
+  5.0k not in any other chain); products 121k → 128k. Real DB updated 18/11 (`node update.js wolt
+  doralon mshuk`, 70 s); the daily update / weekly catalog include them from now on.
+- `cpd_client.php`: a store name that starts with its chain's name ("וולט מרקט | פלורנטין") is
+  shown without repeating it.
+- **The national catalog** (`catalog.js`, barcodes + names for NP, all stores in the country) reads
+  every chain in `chains.json` — 11 until 18/11, now 18. New `catalogOnly: true` (update.js skips
+  it): chains with no store in Tel Aviv / Jerusalem, read only for barcodes and names — **פוליצר,
+  סטופ מרקט, סאלח דבאח**. Also added **סיטי מרקט** (binaprojects; its "ראשל"צ ירושלים 120" store is
+  excluded from the regions — Rishon LeZion, the name put it in Jerusalem). Catalog run for the 7
+  new chains: 315 stores, 24.7k barcodes new to CPD; products 128,567 → 148,400.
+- **Added later on 18/11 with the gov.il details the user gave:** **פז / יילו** (Cerberus `Paz_bo`,
+  public password from gov.il) — 242 stores nationwide, 34 in the regions (14 TLV, 20 JLM); **נתיב
+  החסד** (new `netiv` adapter: app.netiv-hesed.com, public, one day's files per page `?Date=`,
+  downloads `/Prices/Download?fileName=`; Shemi group — נתיב החסד, ברכלטוב, שירה מרקט, one chain id)
+  — 91 stores nationwide, 6 in Jerusalem. Catalog: 3.5k barcodes new to CPD (Netiv 3.2k);
+  products → 153,344. 20 chains in all.
+- **חצי חינם** (new `hazi` adapter: shop.hazi-hinam.co.il/Prices, public; `?t=3` the store list
+  "StoresFull…", `?t=1&d=<day>&p=<page>` the day's price files a page at a time; the earlier probe
+  missed it because the default page lists only the newest 50 price files) — 13 stores, none in the
+  regions → `catalogOnly`. Catalog: 6.4k barcodes new to CPD; products → 158,212. 21 chains.
+- **Stores late by a day or two are not mentioned** (user, 18/11: only from 3 days). `update.js`: a
+  store with no price file this run is skipped quietly (keeps its last prices), no longer an
+  "Errors" line; `Prices/index.php`: the "מפגרים ביום-יומיים" line is gone, "no PriceFull file"
+  entries of older runs are filtered from the failures list. The warning stays at CPD_WARN_DAYS = 3
+  (Prices page and NP's stage 2); hidden after 14 days as before.
+
+### NP for several shops at once (WhatsApp group mode)
+
+**Why:** NP runs of two shops collided in three places: the one image folder of the group
+download (a second download archived the first shop's images, or NP took the other shop's), the
+single WhatsApp connection (a second run refused), and the barcode stage's results kept in the PHP
+session (shared by all tabs: one shop's reading could be saved into the other's folder, and the
+session lock made other tabs wait during a reading).
+
+**What:**
+- **A folder per shop:** group downloads go to the fetcher's `output\images\<shop>` (NP's shop, else
+  the shop the group is linked to, else `ללא חנות`). `WaFetch/config.php`: `waf_shop_key()`,
+  `waf_images_dir()`, `waf_inbox_files($shop)`, `waf_inbox_shops()`; "taken by NP" is per shop
+  (`output\web\consumed\<shop>.json`); the archive is `output\archive\<shop>\<time>`.
+  `NPharmonized/wa_source.php` `npWaImagesDir($source, $shop)`. Kept in the fetcher's folder, not
+  on Z: it is a temporary staging folder (NP copies the images to the NP folder on Z); a partial
+  or cleared download should not sync to the cloud.
+- **A queue for WhatsApp** (one linked device = one run at a time): `web-run.js` waits as
+  `queued` until `output\web\whatsapp.lock` is free and it is the oldest waiting run, then takes
+  it. The page shows "WhatsApp בשימוש: מוריד עכשיו ל-<shop> (…). ההורדה שלך תתחיל אוטומטית"
+  and continues by itself. A lock whose process died, or whose run ended, is taken over. One
+  active run per shop (a second one for the same shop is refused). The WaFetch page lists the
+  active downloads. `npm start` (the CLI) does not use the queue — don't run it during web runs.
+- **Clearing a shop's folder from the page:** "🗑 נקה את התיקייה" moves the images to
+  `output\archive\<shop>\<time>-cleared`; "המשך ל-NP עם התמונות האלו, בלי הורדה" replaces "דלג".
+- **Barcode stage without the session:** `stage_br.php` saves its results to
+  `%TEMP%\np_br\<id>.json` (`NPharmonized/br_run.php`, id in a hidden field `br_run`);
+  `stage_br_save.php` reads that run's file and deletes it. Files older than 2 days are removed.
+- **First real queue test (18/11):** YBC ran, BernardYahud waited and started 13 s after YBC
+  ended, then failed while WhatsApp Web was starting: `Protocol error (Runtime.callFunctionOn):
+  Execution context was destroyed` in `Client.inject` (the page reloaded during the library's
+  setup; once in 27 runs, the only one right after another session closed). Fix: `connectWhatsApp`
+  retries such start errors (and the stuck-login case) up to 3 attempts on a fresh browser, 5 s
+  apart, with "מנסה שוב (ניסיון 2 מתוך 3)" on the page (`hooks.onRetry`); a run that waited in the
+  queue pauses 5 s after taking the lock so the previous browser has fully closed.
+- **Images from before the window** (fetcher `associatePrices`): an image sent before the start
+  whose price reply ("השב") is inside the window is now downloaded too, with the reply's serial (so
+  it sits in NP's order where the price was given) and its own time in the file name. If its
+  download fails: `unmatched` reason `early image download failed` with the reply's time/text, the
+  price and the file name to save it under — a red box at the top of WaFetch's result ("צריך לחפש
+  ולהוריד ידנית") and a 🚨 block in `npm start`'s summary. Tested with fake messages (stubbed
+  download): in-window reply, caption, early image saved, early image failed, two replies to one
+  image (first wins). Not covered: a reply whose quoted message can't be resolved at all (only
+  logged, as before).
+- OpenAI calls are not queued (decision): each shop's reading sends one request at a time, so two
+  or three shops are far below the rate limits.
+- **Verified:** PHP lint; WaFetch page in standalone and NP mode; `image.php` refuses paths out of
+  the folder; the queue code from `web-run.js` in a scratch harness — 4 runs ran one at a time in
+  arrival order, the waiting message names the shop holding WhatsApp, a stale lock is taken over.
+  That test found Windows refusing the status file's rename while another process reads it
+  (EPERM) → `save()` retries and finally writes in place. Not run: a real download, and two NP
+  runs end to end.
 
 ## Recent Updates (November 8, 2026)
 
@@ -3956,3 +4047,53 @@ After processing, `verify_ocrsanity.php` shows a popup listing the result of eac
 **Last Updated:** April 27, 2026
 **Status:** ✅ Phase 0 Complete - PreProcess2 Ready | ✅ Phase 1 Complete - OCR Sanity Ready | ✅ Phase 2 Complete - Commercial Layer Ready | ✅ Harmonized Flow Complete | ✅ Resume from Sanity Feature Complete | ✅ AI Enhancer Tool Ready | ✅ NP Workflow Ready | ✅ JSON Column Auto-Detection Ready
 **Next Phase:** PDF Split & JPG Conversion, then ERP integration, database migration, reporting dashboard
+
+---
+
+## Retailomatics Invoice Scan (`InvoiceScan/`) - started Nov 16, 2026
+
+A rebuild of the invoice scanning flow: the AI (`gpt-5.5`) reads the whole page - no crop
+rectangles, no per-supplier prompt, no manual classification. The old flow (PreProcess2 ->
+harmonizedFlow) is unchanged and stays as the fallback; the new one joins it at step 4.
+
+**Basic stage (built):** http://localhost/website/InvoiceScan/
+
+1. `index.php` - choose the shop (configDir/shops_V2.json) and a document waiting in
+   `preProcessDir`, as it came: one PDF, or one or more photos (JPG / JPEG / PNG = its pages).
+2. `scan.php` -> `lib/InvoiceReader.php` - one call: supplier (name + VAT id), document type,
+   number, date, the rows (barcode / description / qty / unit price / discounts / line total),
+   the printed header of the column each field came from, totals. The model only copies what is
+   printed; the checks are in PHP. State: `InvoiceScan/work/<id>.json` (git-ignored).
+3. `confirm.php` - the document next to the identification, for approval ("option A"):
+   supplier (found by VAT id first, else the AI sure pick by name; or a new supplier), number,
+   date, the invoice type = OCRsanity method, detected by which formula the rows satisfy
+   (`InvoiceReader::detectMethod`), the columns, the rows, the rows sum against the printed totals.
+4. `approve.php` - the supplier entry in `suppliers.json` learns its `vatId` and the printed name
+   (`aliases`); a new supplier is added. The document becomes `<Supplier> dd-mm-yy <Letter>.pdf`
+   in preProcessDir (photos are put into a PDF with FPDF), the sources move to `TempPP`, an
+   OCRjson is written to `AIocr/ocr_extracted`, the harmonizedFlow session is set and the browser
+   goes to `harmonizedFlow/step4_create_ocr_sanity.php` -> the existing OCRsanity screen ->
+   the existing commercial layer.
+
+**One change to the old code:** `OCRsanity/process_ocrsanity.php` `applyInvoiceScanOverride()` -
+when the session has `harmonizedFlow.scanOverride` (method + column mapping approved in
+confirm.php) it replaces the supplier own `OCRsanityMethod` / `jsonToOcrSanity` for that run.
+Without it (the old flow) nothing changes.
+
+**Several documents at once (Nov 16):** index.php takes any number of files ("select all");
+scan.php reads each file on its own, a few in parallel (`InvoiceReader::readMany`), into
+`work/batch_<id>.json`. Photos of the same issuer (suppliers.json key, else VAT id, else printed
+name) and the same date are a question for the user - `group.php` shows them large, side by
+side: one document of several pages, or separate documents (suggested by the document number
+read on each page). Pages of one document are merged (`InvoiceReader::merge`: rows of all pages,
+header from the first page that has it, totals from the last). `batch.php` lists the documents,
+each approved on its own in confirm.php. A PDF is always a whole document.
+
+**Not built yet:** skipping the approval screen when the identification is sure ("option B"),
+the commercial layer on CPD, new product / new price filled from CPD, a way back to the
+document list from the old screens (OCRsanity, commercial layer).
+
+`InvoiceTrial/run.php` - the measurement that led here (Nov 16): 12 WhatsApp photos read by
+4 models; report in `preProcessDir/Trial/report.html`. gpt-5.5 was the only one that read
+suppliers, dates and rows reliably; the VAT id was read the same on every document of a
+supplier while its name was not.

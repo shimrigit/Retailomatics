@@ -7,8 +7,10 @@
 // Settings (saved groups, "messages for me" names) and run folders live under
 // the fetcher's output/web/ (gitignored there, like the rest of output/).
 // Also step 1 of NP harmonized's "WhatsApp — download from a group" mode:
-// NP posts its choices here, and NP takes the images straight from
-// output/images (config.php: WAF_IMAGES_DIR).
+// NP posts its choices here, and NP takes the images straight from the
+// shop's own folder output/images/<shop> (config.php: waf_images_dir).
+// Runs of several shops can be started together: they queue for the one
+// WhatsApp connection (web-run.js), one shop at a time.
 
 // It starts programs and opens windows on this computer: only from the
 // computer itself — not through the ngrok tunnel the WhatsApp webhook uses
@@ -46,13 +48,36 @@ function waf_pid_alive(int $pid): bool
     return is_string($out) && strpos($out, (string) $pid) !== false;
 }
 
-/** The job still running, as [id, status], or null. One run at a time (one WhatsApp session). */
-function waf_running_job(): ?array
+/**
+ * The runs not finished yet (running, or queued for the WhatsApp connection),
+ * oldest first, as [id => ['status' => ..., 'shop' => ...]]. A run just
+ * started (no pid yet, under a minute old) counts too.
+ */
+function waf_active_jobs(): array
 {
+    $out = [];
     foreach (glob(WAF_JOBS_DIR . '/*/status.json') ?: [] as $path) {
         $st = waf_read_json($path);
-        if ($st && !in_array($st['state'] ?? '', ['done', 'error'], true) && waf_pid_alive((int) ($st['pid'] ?? 0))) {
-            return [basename(dirname($path)), $st];
+        if (!$st || in_array($st['state'] ?? '', ['done', 'error'], true)) {
+            continue;
+        }
+        $pid = (int) ($st['pid'] ?? 0);
+        if ($pid ? !waf_pid_alive($pid) : filemtime($path) < time() - 60) {
+            continue;
+        }
+        $job = waf_read_json(dirname($path) . '/job.json') ?? [];
+        $out[basename(dirname($path))] = ['status' => $st, 'shop' => (string) ($job['shop'] ?? '')];
+    }
+    ksort($out);
+    return $out;
+}
+
+/** The shop's run not finished yet, as [id, status], or null. One run per shop at a time. */
+function waf_active_job_for(string $shop): ?array
+{
+    foreach (waf_active_jobs() as $id => $j) {
+        if (waf_shop_key($j['shop']) === waf_shop_key($shop)) {
+            return [$id, $j['status']];
         }
     }
     return null;
@@ -80,10 +105,13 @@ function waf_job_dir(string $id): ?string
     return preg_match('/^\d{6}-\d{6}-[0-9a-f]{4}$/', $id) && is_dir(WAF_JOBS_DIR . "/$id") ? WAF_JOBS_DIR . "/$id" : null;
 }
 
-/** Opens output/images in Explorer with large icons (as at the end of a run). */
-function waf_open_images_folder(): void
+/** Opens the shop's images folder in Explorer with large icons (as at the end of a run). */
+function waf_open_images_folder(string $shop): void
 {
-    $dir = str_replace('/', '\\', WAF_IMAGES_DIR);
+    if (!is_dir(waf_images_dir($shop))) {
+        mkdir(waf_images_dir($shop), 0777, true);
+    }
+    $dir = str_replace('/', '\\', waf_images_dir($shop));
     $ps = "\$dir = '" . str_replace("'", "''", $dir) . "'\n"
         . "Start-Process explorer.exe -ArgumentList ('\"' + \$dir + '\"')\n"
         . "\$sh = New-Object -ComObject Shell.Application\n"

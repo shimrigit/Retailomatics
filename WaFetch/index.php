@@ -5,18 +5,24 @@
 // From NP harmonized (POST np_flow=1 with NP's choices): step 1 of the
 // "WhatsApp — download from a group" mode. That shop's groups come first,
 // and "המשך ל-NP" / "דלג" post NP's choices on to NPharmonized/confirm.php.
+// Each shop has its own images folder (output/images/<shop>), and runs of
+// several shops can be started together: they queue for WhatsApp.
 require_once __DIR__ . '/lib.php';
 $settings = waf_settings();
-$running = waf_running_job();
 $np = ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['np_flow']))
     ? array_map('strval', array_intersect_key($_POST, array_flip(['date', 'shop', 'root_letter', 'mode', 'harvest_mode', 'wa_source'])))
     : null;
-$inboxCount = count(waf_inbox_files());
+$active = waf_active_jobs();
+// The run this page follows: from NP, that shop's; otherwise the oldest one.
+$running = $np ? waf_active_job_for($np['shop'] ?? '') : ($active ? [array_key_first($active)] : null);
+// The folders with images: from NP, that shop's only.
+$inboxShops = $np ? (waf_inbox_files($np['shop'] ?? '') ? [waf_shop_key($np['shop'] ?? '')] : []) : waf_inbox_shops();
+$stateHe = ['queued' => 'ממתינה בתור ל-WhatsApp', 'starting' => 'מתחילה', 'connecting' => 'מתחברת', 'qr' => 'ממתינה לסריקת QR',
+    'loading' => 'טוענת הודעות', 'downloading' => 'מורידה תמונות'];
 $boot = [
     'groups'  => $settings['groups'],
     'names'   => $settings['names'],
     'running' => $running[0] ?? null,
-    'imagesDir' => str_replace('/', '\\', WAF_IMAGES_DIR),
     'shop'    => $np['shop'] ?? null,
 ];
 ?>
@@ -52,6 +58,7 @@ $boot = [
     .state { padding: 16px; border-radius: 8px; font-size: 19px; background: #e8f1f8; color: #1a5c87; display: flex; gap: 12px; align-items: center; }
     .state.done { background: #d4edda; color: #155724; }
     .state.error { background: #f8d7da; color: #721c24; }
+    .state.queued { background: #fff3cd; color: #856404; }
     .spinner { width: 20px; height: 20px; border: 3px solid #9bc1dc; border-top-color: #2575a8; border-radius: 50%; animation: spin 1s linear infinite; flex: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .bar { height: 10px; background: #e3e3e3; border-radius: 5px; margin-top: 10px; overflow: hidden; }
@@ -89,13 +96,50 @@ $boot = [
                 <b>NP Harmonized</b> · <?= htmlspecialchars($np['shop'] ?? '') ?> · <?= htmlspecialchars(date('d/m/Y', strtotime($np['date'] ?? 'today'))) ?>
                 <br><span class="muted">שלב 1: הורדת התמונות מהקבוצה. בסיום — "המשך ל-NP".</span>
             </div>
-            <?php if ($inboxCount): ?>
-                <button type="button" class="secondary small" onclick="document.getElementById('npForm').submit()"
-                        title="להמשיך עם התמונות שכבר בתיקייה">דלג — התמונות כבר הורדו (<?= $inboxCount ?>) ←</button>
-            <?php endif; ?>
         </div>
     <?php endif; ?>
 
+    <?php if ($active): ?>
+        <!-- Downloads running now (any shop): one at a time on WhatsApp, the others wait in line. -->
+        <div class="panel" style="margin-bottom:8px">
+            <b>הורדות פעילות</b>
+            <?php foreach ($active as $id => $j): ?>
+                <div style="margin-top:4px">• <?= htmlspecialchars(waf_shop_key($j['shop'])) ?> —
+                    <?= htmlspecialchars($stateHe[$j['status']['state'] ?? ''] ?? ($j['status']['state'] ?? '')) ?></div>
+            <?php endforeach; ?>
+            <p class="hint">WhatsApp מוריד לחנות אחת בכל פעם. הורדה שתתחילו עכשיו לחנות אחרת תיכנס לתור ותתחיל לבד.</p>
+        </div>
+    <?php endif; ?>
+
+    <?php foreach ($inboxShops as $ibShop):
+        $inbox = waf_inbox_files($ibShop);
+        $inboxCount = count($inbox);
+        $inboxTaken = $inboxCount - count(waf_unprocessed_files($ibShop));
+        $inboxTime = max(array_map(fn($f) => filemtime(waf_images_dir($ibShop) . '/' . $f), $inbox)); ?>
+        <!-- Images already in the shop's folder: continue with them, or clear the folder before a new download. -->
+        <div class="panel inboxPanel" style="border-color:#e0b000;background:#fffbea">
+            <div style="font-size:18px">
+                <b>בתיקייה של <?= htmlspecialchars($ibShop) ?> כבר יש <?= $inboxCount ?> תמונות</b>
+                <span class="muted">· הורדו עד <?= date('d/m/Y H:i', $inboxTime) ?>
+                    · <?= $inboxTaken === $inboxCount ? 'כולן כבר נלקחו ל-NP' : ($inboxTaken ? "$inboxTaken מהן כבר נלקחו ל-NP" : 'NP עוד לא לקח אותן') ?></span>
+            </div>
+            <details style="margin-top:8px"><summary class="muted" style="cursor:pointer">הצג את התמונות</summary>
+                <div class="grid">
+                    <?php foreach ($inbox as $f): $u = 'image.php?s=' . rawurlencode($ibShop) . '&f=' . rawurlencode($f); ?>
+                        <figure><a href="<?= $u ?>" target="_blank"><img src="<?= $u ?>" loading="lazy" alt=""></a>
+                            <figcaption><?= htmlspecialchars($f) ?></figcaption></figure>
+                    <?php endforeach; ?>
+                </div>
+            </details>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+                <?php if ($np): ?>
+                    <button type="button" onclick="document.getElementById('npForm').submit()">המשך ל-NP עם התמונות האלו, בלי הורדה ←</button>
+                <?php endif; ?>
+                <button type="button" class="secondary clearInbox" data-shop="<?= htmlspecialchars($ibShop) ?>">🗑 נקה את התיקייה</button>
+            </div>
+            <p class="hint">"נקה" מעביר את התמונות לארכיון (<span dir="ltr">output\archive\<?= htmlspecialchars($ibShop) ?></span>), כך שאפשר לשחזר. אחרי הניקוי בוחרים קבוצה וטווח ומורידים מחדש.</p>
+        </div>
+    <?php endforeach; ?>
     <h3>1. קבוצה</h3>
     <div class="row">
         <div class="grow">
@@ -247,7 +291,7 @@ $('runBtn').onclick = async () => {
         const data = { key, start, end, names: $('names').value, shop: boot.shop || '' };
         let r = await api('fetch', data);
         if (r.needConfirm) {
-            if (!confirm(`בתיקייה יש ${r.unprocessed} תמונות ש-NP עוד לא עיבד.\nהן יועברו לארכיון (output\\archive) ולא ייכנסו ל-NP. להמשיך?`)) return;
+            if (!confirm(`בתיקייה של החנות יש ${r.unprocessed} תמונות ש-NP עוד לא עיבד.\nהן יועברו לארכיון (output\\archive) ולא ייכנסו ל-NP. להמשיך?`)) return;
             r = await api('fetch', { ...data, confirm_archive: 1 });
         }
         follow(r.job, 'fetch');
@@ -277,7 +321,7 @@ function follow(job, mode) {
         let st;
         try { st = await (await fetch('api.php?action=status&job=' + job)).json(); } catch (e) { return setTimeout(tick, 2000); }
         const finished = st.state === 'done' || st.state === 'error';
-        $('stateBox').className = 'state' + (st.state === 'done' ? ' done' : st.state === 'error' ? ' error' : '');
+        $('stateBox').className = 'state' + (st.state === 'done' ? ' done' : st.state === 'error' ? ' error' : st.state === 'queued' ? ' queued' : '');
         $('spinner').style.display = finished ? 'none' : '';
         $('stateText').innerHTML = esc(st.message || '…') + (st.error ? `<br><span style="font-size:14px;direction:ltr;display:block;text-align:left;white-space:pre-wrap">${esc(st.error)}</span>` : '');
         $('qr').innerHTML = st.state === 'qr' && st.qr ? `<pre class="qr">${esc(st.qr)}</pre>` : '';
@@ -302,6 +346,20 @@ function showResult(r) {
             <div class="c-warn"><b>${r.unmatched.length}</b>תמונות בלי מחיר — לא נשמרו</div>
             <div class="c-me"><b>${r.actionRequests.length}</b>הודעות אליך</div>
         </div>`;
+    // Images sent before the window whose price reply is inside it.
+    const earlyFailed = r.unmatched.filter(u => u.reason === 'early image download failed');
+    const earlySaved = r.matched.filter(m => m.early);
+    if (earlyFailed.length) {
+        html += `<div style="margin-top:16px;padding:16px;border:3px solid #c0392b;background:#fdecea;border-radius:8px;color:#721c24">
+            <div style="font-size:21px;font-weight:bold">🚨 ${earlyFailed.length === 1 ? 'תמונה אחת' : earlyFailed.length + ' תמונות'} עם "השב" בטווח לא ירדו — צריך לחפש ולהוריד ידנית</div>
+            <p style="margin:6px 0 10px">התמונה נשלחה לפני תחילת הטווח, ה"השב" עם המחיר נמצא בטווח, אבל ההורדה שלה נכשלה. מצא אותה בקבוצה (לפי ה"השב"), שמור אותה בתיקייה בשם שמופיע כאן — ואז המשך ל-NP.</p>
+            <table style="background:#fff"><tr><th>זמן התמונה</th><th>שולח</th><th>"השב" (זמן · טקסט)</th><th>מחיר</th><th>שם הקובץ לשמירה</th></tr>`
+            + earlyFailed.map(u => `<tr><td>${t(u.timestamp)}</td><td>${esc(u.sender)}</td>
+                <td>${t(u.replyTimestamp)} · ${esc(u.replyText)}${u.replySender && u.replySender !== u.sender ? ' <span class="muted">(' + esc(u.replySender) + ')</span>' : ''}</td>
+                <td><b>${esc(u.price)} ₪</b></td><td dir="ltr">${esc(u.filename || "")}</td></tr>`).join('')
+            + `</table><p class="muted" style="margin:8px 0 0;direction:ltr;text-align:right">${esc(r.imagesDir)}</p></div>`;
+    }
+    if (earlySaved.length) html += `<p class="hint">ℹ️ ${earlySaved.length} תמונות נשלחו לפני תחילת הטווח, אבל ה"השב" עם המחיר שלהן בטווח — הן ירדו ונכנסו לרצף לפי זמן ה"השב".</p>`;
     if (r.notFromStart) html += `<p class="hint warn">לא ניתן היה לטעון הודעות לפני ${esc(r.notFromStart)} — התוצאות מתחילות משם. ודא שהטלפון מחובר ו-WhatsApp פתוח בו, ונסה שוב.</p>`;
     if (r.actionRequests.length) {
         html += '<h3>📌 הודעות אליך</h3>' + r.actionRequests.map(a => `
@@ -314,13 +372,14 @@ function showResult(r) {
     html += `<h3>✅ התמונות שנשמרו</h3><p class="muted" style="direction:ltr;text-align:right">${esc(r.imagesDir)}</p>`;
     html += r.matched.length ? '<div class="grid">' + r.matched.map(m => {
         const f = m.filename || m.imagePath.split('/').pop();
-        return `<figure><a href="image.php?f=${encodeURIComponent(f)}" target="_blank"><img src="image.php?f=${encodeURIComponent(f)}" loading="lazy"></a>
+        const u = `image.php?s=${encodeURIComponent(r.shop || '')}&f=${encodeURIComponent(f)}`;
+        return `<figure><a href="${u}" target="_blank"><img src="${u}" loading="lazy"></a>
             <figcaption><b>${esc(m.price)} ₪</b><br>${esc(f)}</figcaption></figure>`;
     }).join('') + '</div>' : '<p class="hint">לא נשמרו תמונות בטווח הזה.</p>';
     if (r.unmatched.length) {
         html += '<h3>⚠️ תמונות שלא נשמרו</h3><table><tr><th>#</th><th>זמן</th><th>סיבה</th><th>כיתוב</th></tr>' + r.unmatched.map(u => `
             <tr><td>${esc(u.serial ?? '')}</td><td>${u.timestamp ? t(u.timestamp) : ''}</td>
-            <td>${u.reason === 'image download failed' ? 'ההורדה נכשלה' : 'אין מחיר (לא בתגובה ולא בכיתוב)'}</td><td>${esc(u.caption || '')}</td></tr>`).join('') + '</table>';
+            <td>${u.reason === 'early image download failed' ? '🚨 תמונה מלפני הטווח עם "השב" בטווח — ההורדה נכשלה (ראה למעלה)' : u.reason === 'image download failed' ? 'ההורדה נכשלה' : 'אין מחיר (לא בתגובה ולא בכיתוב)'}</td><td>${esc(u.caption || '')}</td></tr>`).join('') + '</table>';
     }
     if (r.archived) html += `<p class="muted">${r.archived.count} התמונות מהריצה הקודמת הועברו ל-<span style="direction:ltr;unicode-bidi:embed">${esc(r.archived.dir)}</span></p>`;
     html += '<button class="secondary small" id="openFolder" style="margin-top:14px">📂 פתח את התיקייה שוב (סמלים גדולים)</button>';
@@ -330,9 +389,18 @@ function showResult(r) {
             : '<p class="hint warn">לא נשמרו תמונות — אין מה להעביר ל-NP. בדוק את הקבוצה ואת טווח הזמן.</p>';
     }
     $('result').innerHTML = html;
-    $('openFolder').onclick = () => api('open_folder', {});
+    $('openFolder').onclick = () => api('open_folder', { shop: r.shop || '' });
     if ($('npContinue')) $('npContinue').onclick = () => $('npForm').submit();
 }
+
+document.querySelectorAll('.clearInbox').forEach(b => b.onclick = async () => {
+    const shop = b.dataset.shop;
+    if (!confirm(`להעביר את כל התמונות שבתיקייה של ${shop} לארכיון?`)) return;
+    try {
+        const r = await api('clear_folder', { shop });
+        b.closest('.inboxPanel').innerHTML = `<b>✔ התיקייה של ${esc(shop)} נוקתה</b> <span class="muted">— ${r.count} תמונות הועברו ל-<span dir="ltr">${esc(r.dir || '')}</span></span>`;
+    } catch (e) { alert(e.message); }
+});
 
 $('names').value = (boot.names || []).join(', ');
 renderGroups();

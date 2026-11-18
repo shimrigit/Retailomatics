@@ -1,10 +1,12 @@
 <?php
 // Stage 1 – Barcode Reading
 set_time_limit(0);
-session_start();
+// No session here: this run's results go to a file of its own (br_run.php), so NP
+// runs of several shops in other tabs neither overwrite nor wait for each other.
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/barcode_validate.php';
 require_once __DIR__ . '/flow_mode.php';
+require_once __DIR__ . '/br_run.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['np_dir'])) {
     header('Location: index.php'); exit;
@@ -190,19 +192,22 @@ foreach ($jpegItems as $idx => $item) {
     ];
 }
 
-// Store in session for stage_br_save.php
-$_SESSION['br_results']  = $results;
-$_SESSION['br_npdir']    = $npDir;
-$_SESSION['br_xlsx']     = $xlsxFile;
-$_SESSION['br_shop']     = $shop;
-$_SESSION['br_date']     = $date;
-$_SESSION['br_deptfile'] = $deptFile;
+// Stored for stage_br_save.php under this run's own id (br_run.php)
+$brRun = npBrRunSave([
+    'results'  => $results,
+    'npdir'    => $npDir,
+    'xlsx'     => $xlsxFile,
+    'shop'     => $shop,
+    'date'     => $date,
+    'deptfile' => $deptFile,
+]);
 ?>
 </div>
 
 <!-- ── Verification table ─────────────────────────────────────────────────── -->
 <h3>אמת ברקודים – ניתן לערוך לפני האישור</h3>
 <form id="advanceForm" action="stage_br_save.php" method="post">
+<input type="hidden" name="br_run" value="<?= htmlspecialchars($brRun) ?>">
 <input type="hidden" name="mode" value="<?= htmlspecialchars($mode) ?>">
 <div id="blockMsg"></div>
 <table class="vtbl">

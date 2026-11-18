@@ -4,8 +4,11 @@
 //   POST action=add_group  name          → saves a group (its name exactly as in WhatsApp)
 //   POST action=remove_group  key
 //   POST action=fetch  key start end names [shop] [confirm_archive] → starts a run
+//        into the shop's folder output/images/<shop> (shop: NP's, else the group's).
+//        Runs of other shops may be active: this one queues for WhatsApp (web-run.js).
 //        (→ {needConfirm, unprocessed} first if the folder holds images NP never took)
-//   POST action=open_folder              → opens output/images in Explorer again
+//   POST action=open_folder  shop        → opens the shop's images folder in Explorer
+//   POST action=clear_folder shop        → moves the shop's images to output/archive/<shop>/<time>-cleared
 require_once __DIR__ . '/lib.php';
 header('Content-Type: application/json; charset=utf-8');
 
@@ -46,9 +49,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     out(['error' => 'POST required'], 405);
 }
 
-if ($action === 'fetch' && ($running = waf_running_job())) {
-    out(['error' => 'ריצה אחרת עדיין פעילה — המתן שתסתיים', 'job' => $running[0]], 409);
-}
 
 switch ($action) {
     case 'add_group':
@@ -82,26 +82,56 @@ switch ($action) {
         if ($end > time() + 60) {
             $end = time();
         }
+        // The shop's folder: NP's shop, else the shop the group is linked to.
+        $shop = trim((string) ($_POST['shop'] ?? ''));
+        $runShop = $shop !== '' ? $shop : (string) ($group['shop'] ?? '');
+        if ($running = waf_active_job_for($runShop)) {
+            out(['error' => 'כבר יש הורדה פעילה ל-' . waf_shop_key($runShop) . ' — המתן שתסתיים', 'job' => $running[0]], 409);
+        }
         // The run moves the folder's images to the archive first: warn about
         // images NP harmonized never took (a batch would leave the NP inbox).
-        $unprocessed = waf_unprocessed_files();
+        $unprocessed = waf_unprocessed_files($runShop);
         if ($unprocessed && empty($_POST['confirm_archive'])) {
             out(['needConfirm' => true, 'unprocessed' => count($unprocessed)]);
         }
         $names = array_values(array_filter(array_map('trim', preg_split('/[,،\n]+/u', (string) ($_POST['names'] ?? '')))));
         $settings['names'] = $names;
         // From NP: the group belongs to this shop (set once — a group serves one shop).
-        $shop = trim((string) ($_POST['shop'] ?? ''));
         if ($shop !== '' && empty($settings['groups'][$key]['shop'])) {
             $settings['groups'][$key]['shop'] = $shop;
         }
         waf_save_settings($settings);
         out(['job' => waf_start_job(
-            ['chatName' => $group['name'], 'start' => $start, 'end' => $end, 'names' => $names],
-            ['mode' => 'fetch', 'key' => $key, 'end' => $end])]);
+            ['chatName' => $group['name'], 'start' => $start, 'end' => $end, 'names' => $names,
+             'shop' => waf_shop_key($runShop), 'imagesDir' => str_replace('/', '\\', waf_images_dir($runShop))],
+            ['mode' => 'fetch', 'key' => $key, 'end' => $end, 'shop' => waf_shop_key($runShop)])]);
 
     case 'open_folder':
-        waf_open_images_folder();
+        waf_open_images_folder((string) ($_POST['shop'] ?? ''));
         out(['ok' => true]);
+
+    case 'clear_folder':
+        // Empties output/images from the page — the files go to output/archive/<time>
+        // (as a download does with the previous run's), so nothing is lost.
+        $shop = (string) ($_POST['shop'] ?? '');
+        if ($running = waf_active_job_for($shop)) {
+            out(['error' => 'הורדה ל-' . waf_shop_key($shop) . ' עדיין פעילה — המתן שתסתיים', 'job' => $running[0]], 409);
+        }
+        $files = waf_inbox_files($shop);
+        if (!$files) {
+            out(['ok' => true, 'count' => 0]);
+        }
+        $dest = WAF_ARCHIVE_DIR . '/' . waf_shop_key($shop) . '/' . date('Y-m-d\TH-i-s') . '-cleared';
+        if (!is_dir($dest) && !mkdir($dest, 0777, true)) {
+            out(['error' => 'לא ניתן ליצור את תיקיית הארכיון'], 500);
+        }
+        $moved = 0;
+        foreach ($files as $f) {
+            $moved += rename(waf_images_dir($shop) . '/' . $f, "$dest/$f") ? 1 : 0;
+        }
+        if ($moved < count($files)) {
+            out(['error' => 'הועברו ' . $moved . ' מתוך ' . count($files) . ' קבצים — ייתכן שקובץ פתוח בתוכנה אחרת'], 500);
+        }
+        out(['ok' => true, 'count' => $moved, 'dir' => str_replace('/', '\\', $dest)]);
 }
 out(['error' => 'unknown action'], 400);

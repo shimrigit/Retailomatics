@@ -1,9 +1,10 @@
 <?php
 // Stage 1 save – writes barcodes + prices to xlsx, saves _BR.xlsx
-session_start();
+// The reading's results come from this run's own file (br_run.php), not the session.
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/xlsx_retry.php';
 require_once __DIR__ . '/flow_mode.php';
+require_once __DIR__ . '/br_run.php';
 require_once __DIR__ . '/shop_city.php';
 require_once __DIR__ . '/../commercialLayer/cpd_client.php';
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -11,16 +12,18 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_SESSION['br_results'])) {
+$brRun = (string) ($_POST['br_run'] ?? '');
+$br    = $_SERVER['REQUEST_METHOD'] === 'POST' ? npBrRunLoad($brRun) : null;
+if (!$br || empty($br['results'])) {
     header('Location: index.php'); exit;
 }
 
-$results  = $_SESSION['br_results'];
-$npDir    = $_SESSION['br_npdir'];
-$xlsxFile = $_SESSION['br_xlsx'];
-$shop     = $_SESSION['br_shop'];
-$date     = $_SESSION['br_date'];
-$deptFile = $_SESSION['br_deptfile'];
+$results  = $br['results'];
+$npDir    = $br['npdir'];
+$xlsxFile = $br['xlsx'];
+$shop     = $br['shop'];
+$date     = $br['date'];
+$deptFile = $br['deptfile'];
 $barcodes = $_POST['barcode'] ?? [];
 $mode     = npFlowMode();
 
@@ -65,9 +68,8 @@ try {
     die('<p style="color:red;font-family:Arial;font-size:22px;padding:30px">שגיאה בשמירת Excel: ' . htmlspecialchars($e->getMessage()) . '</p>');
 }
 
-// Clear session BR data
-unset($_SESSION['br_results'], $_SESSION['br_npdir'], $_SESSION['br_xlsx'],
-      $_SESSION['br_shop'], $_SESSION['br_date'], $_SESSION['br_deptfile']);
+// This run's reading is saved: its file is no longer needed
+npBrRunDelete($brRun);
 ?>
 <!DOCTYPE html>
 <html lang="he" dir="rtl">

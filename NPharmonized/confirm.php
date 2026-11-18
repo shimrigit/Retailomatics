@@ -55,7 +55,7 @@ if ($harvestMode === 'whatsapp') {
     $npDirExists = is_dir($npDir);
 
     // ── Validate the images staged by the chosen WhatsApp source ──────────────
-    $whatsappImagesDir = npWaImagesDir($waSource);
+    $whatsappImagesDir = npWaImagesDir($waSource, $shop);
     $waPattern = '/^\d{6}-\d{6} (\d+) (.+)\.jpe?g$/i';
     $waFiles   = glob($whatsappImagesDir . '/*.{jpg,jpeg,JPG,JPEG}', GLOB_BRACE) ?: [];
 

@@ -307,17 +307,18 @@ $found = count(array_filter($results, fn($r) => $r['card']));
         <?php
         $cov = $cpd->coverage();
         $runErrors = $lastRun ? (json_decode((string) $lastRun['errors'], true) ?: []) : [];
+        // A store that published no file this time is not a failure: chains skip a day now and
+        // then. It is warned about only when CPD_WARN_DAYS (3) days behind ($cov['warn'] below).
+        $runErrors = array_values(array_filter($runErrors, fn($e) => !str_contains((string) $e, 'no PriceFull file')));
         ?>
         <?php $storeList = fn($rows) => htmlspecialchars(implode(' · ', array_map(fn($s) => "{$s['chain']} {$s['name']} ({$s['days']} ימים)", $rows))); ?>
         <?php if ($cov['warn']): ?>
             <div class="status warn">⚠ <?= count($cov['warn']) ?> סניפים לא התעדכנו <?= CPD_WARN_DAYS ?> ימים ויותר: <?= $storeList($cov['warn']) ?>
                 <br>(אחרי 14 ימים סניף מוסתר אוטומטית — כנראה נסגר)</div>
         <?php endif; ?>
-        <?php $minor = array_filter($cov['behind'], fn($s) => $s['days'] < CPD_WARN_DAYS); ?>
-        <?php if ($minor): ?>
-            <div class="status">מפגרים ביום-יומיים (רגיל — לפעמים רשת לא מפרסמת קובץ): <?= $storeList($minor) ?></div>
-        <?php elseif (!$cov['warn'] && !$stale): ?>
-            <div class="status ok">✓ כל הסניפים עודכנו היום: <?= htmlspecialchars(implode(' · ',
+        <?php // Stores 1–2 days behind are not mentioned (a chain skipping a day is normal). ?>
+        <?php if (!$cov['warn'] && !$stale): ?>
+            <div class="status ok">✓ הסניפים מעודכנים: <?= htmlspecialchars(implode(' · ',
                 array_map(fn($k, $n) => "$n ב" . $cpd->regionName($k), array_keys($cov['regions']), $cov['regions']))) ?></div>
         <?php endif; ?>
         <?php if ($cov['hidden']): ?>

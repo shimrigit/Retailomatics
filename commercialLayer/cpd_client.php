@@ -175,7 +175,8 @@ class CPDClient {
         $prices = [];
         foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $p) {
             $prices[] = [
-                'store'   => $this->chainName($p['chain']) . ' – ' . ($p['store'] ?: $p['store_id']),
+                // Wolt names its stores "וולט מרקט | <branch>": the chain's name isn't repeated.
+                'store'   => $this->chainName($p['chain']) . ' – ' . preg_replace('/^' . preg_quote($this->chainName($p['chain']), '/') . '\s*\|\s*/u', '', (string) ($p['store'] ?: $p['store_id'])),
                 'address' => (string) $p['address'],
                 'price'   => number_format((float) $p['price'], 2, '.', ''),
                 'chain'   => $p['chain'],

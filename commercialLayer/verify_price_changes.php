@@ -9,6 +9,7 @@ session_start();
 // Load required files
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/chp_headless_client.php';
+require_once __DIR__ . '/cpd_client.php';   // CPD — the chains' price files; chp.co.il no longer answers the scraper
 
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
@@ -143,7 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['chp_search'])) {
     if (empty($searchBarcode) || empty($searchCity)) {
         $chpError = 'נא למלא ברקוד ועיר';
     } else {
-        $client = new CHPHeadlessClient();
+        $client = new CPDClient();   // was CHPHeadlessClient (same searchPrices contract; the city is ignored — CPD is Tel Aviv)
 
         // Capture output to suppress debug messages
         ob_start();
@@ -498,6 +499,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
             text-align: center;
         }
 
+        [data-copy-price] { cursor: copy; }
+        [data-copy-price]:hover { outline: 2px solid #ffb300; outline-offset: 1px; }
         .stat-box .value {
             font-size: 1.4em;
             font-weight: bold;
@@ -677,15 +680,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
                         ?>
 
                         <div class="chp-stats">
-                            <div class="stat-box">
+                            <div class="stat-box" data-copy-price="<?= round($minPrice, 2) ?>" title="לחיצה מעתיקה ל-Rec Price בשורה שנבחרה">
                                 <span class="value"><?= number_format($minPrice, 2) ?> ₪</span>
                                 <span class="label">מחיר מינימום</span>
                             </div>
-                            <div class="stat-box">
+                            <div class="stat-box" data-copy-price="<?= round($avgPrice, 2) ?>" title="לחיצה מעתיקה ל-Rec Price בשורה שנבחרה">
                                 <span class="value"><?= number_format($avgPrice, 2) ?> ₪</span>
                                 <span class="label">מחיר ממוצע</span>
                             </div>
-                            <div class="stat-box">
+                            <div class="stat-box" data-copy-price="<?= round($maxPrice, 2) ?>" title="לחיצה מעתיקה ל-Rec Price בשורה שנבחרה">
                                 <span class="value"><?= number_format($maxPrice, 2) ?> ₪</span>
                                 <span class="label">מחיר מקסימום</span>
                             </div>
@@ -717,7 +720,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
                                     <tr class="<?= $isBestPrice ? 'best-price-row' : '' ?>">
                                         <td><?= htmlspecialchars($item['chain'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($item['store'] ?? '') ?></td>
-                                        <td class="price-cell">
+                                        <td class="price-cell"<?= is_numeric($item['price']) ? ' data-copy-price="' . round((float) $item['price'], 2) . '" title="לחיצה מעתיקה ל-Rec Price בשורה שנבחרה"' : '' ?>>
                                             <?php if (is_numeric($item['price'])): ?>
                                                 <?= number_format((float)$item['price'], 2) ?> ₪
                                             <?php else: ?>
@@ -774,6 +777,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
 
         // Rows the user has edited during this session (either field)
         const dirtyRows = new Set();
+        let activeRow = -1;   // the last row selected in the table — where a click in the price search copies to
 
         // ── Custom renderers ────────────────────────────────────────────────
         function barcodeRenderer(hot, TD, row, col, prop, value, cp) {
@@ -892,6 +896,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
                     }
                 });
             },
+            afterSelectionEnd(row) { if (row >= 0) activeRow = row; },
             afterOnCellMouseDown(event, coords) {
                 if (coords.col === barcodeColIdx && coords.row >= 0) {
                     const barcode = String(hot.getDataAtCell(coords.row, barcodeColIdx) ?? '');
@@ -901,6 +906,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
                         .finally(() => {
                             document.getElementById('barcode').value = barcode;
                             const n = document.getElementById('copiedNotification');
+                            n.textContent = '✓ ברקוד הועתק בהצלחה!';
                             n.classList.add('show');
                             setTimeout(() => n.classList.remove('show'), 3000);
                         });
@@ -909,6 +915,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
         });
 
         window.addEventListener('resize', () => hot.updateSettings({ height: hotHeight() }));
+
+        // ── A click on a price in the search (a store's, the minimum, average or maximum) copies it
+        // into Rec Price of the selected row — as if typed: Rec Mrgn and Recommend follow, the row is saved.
+        function notify(text) {
+            const n = document.getElementById('copiedNotification');
+            n.textContent = text;
+            n.classList.add('show');
+            setTimeout(() => n.classList.remove('show'), 2500);
+        }
+        document.getElementById('chpResultsContainer').addEventListener('click', e => {
+            const el = e.target.closest('[data-copy-price]');
+            if (!el || recPriceColIdx < 0) return;
+            if (activeRow < 0 || activeRow >= hot.countRows()) { notify('בחרו קודם שורה בטבלה'); return; }
+            hot.setDataAtCell(activeRow, recPriceColIdx, parseFloat(el.dataset.copyPrice));
+            hot.selectCell(activeRow, recPriceColIdx);
+            notify('✓ הועתק לשורה ' + (activeRow + 1) + ' — Rec Price ' + el.dataset.copyPrice);
+        });
 
         // ── CHP search (AJAX, unchanged logic) ─────────────────────────────
         document.getElementById('chpSearchForm').addEventListener('submit', function(e) {

@@ -7,6 +7,7 @@
 session_start();
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/chp_headless_client.php';
+require_once __DIR__ . '/cpd_client.php';   // CPD — the chains' price files; chp.co.il no longer answers the scraper
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 $npFileName = $_GET['npFile'] ?? $_SESSION['npFileName'] ?? null;
@@ -23,11 +24,13 @@ $defaultCity = $shopConfig['shopDefaultCity'] ?? 'תל אביב';
 $departmentsConfigPath = __DIR__ . '/../configDir/' . $shopName . '_Departments.json';
 $departments   = [];
 $departmentMap = []; // name → code
+$departmentMargins = []; // name → "40%" (as calculate_margins.php writes it)
 if (file_exists($departmentsConfigPath)) {
     foreach (json_decode(file_get_contents($departmentsConfigPath), true) as $d) {
         if (isset($d['DepartmentName'])) {
             $departments[]                       = $d['DepartmentName'];
             $departmentMap[$d['DepartmentName']] = $d['DepartmentNumber'] ?? '';
+            if (isset($d['ExpectedMarginPercentage'])) $departmentMargins[$d['DepartmentName']] = round($d['ExpectedMarginPercentage'] * 100, 2) . '%';
         }
     }
 }
@@ -77,6 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cDeptCode     = array_search('DepartmentCode', $hdr);
             if ($cDeptCode === false) $cDeptCode = array_search('DepartmentNumber', $hdr);
             if ($cDeptCode === false) $cDeptCode = 14; // column O fallback (0-based)
+            $cDeptMargin   = array_search('DepartmentMargin', $hdr);
             $cSalePrice    = array_search('SalePrice',   $hdr);
             $cActualMargin = array_search('ActualMargin', $hdr);
 
@@ -91,6 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $dn = $row['departmentName'];
                     $sh->setCellValueByColumnAndRow($cDeptName + 1, $rn, $dn);
                     $sh->setCellValueByColumnAndRow($cDeptCode + 1, $rn, $departmentMap[$dn] ?? '');
+                    if ($cDeptMargin !== false && array_key_exists('departmentMargin', $row))
+                        $sh->setCellValueByColumnAndRow($cDeptMargin + 1, $rn, (string) $row['departmentMargin']);
                 }
                 if ($cSalePrice    !== false && array_key_exists('salePrice',    $row))
                     $sh->setCellValueByColumnAndRow($cSalePrice    + 1, $rn, $row['salePrice']);
@@ -126,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['chp_search'])) {
     if (empty($searchBarcode) || empty($searchCity)) {
         $chpError = 'נא למלא ברקוד ועיר';
     } else {
-        $client = new CHPHeadlessClient();
+        $client = new CPDClient();   // was CHPHeadlessClient (same searchPrices contract; the city is ignored — CPD is Tel Aviv)
         ob_start();
         $chpResults = $client->searchPrices($searchBarcode, $searchCity);
         ob_end_clean();
@@ -257,6 +263,9 @@ $npHeaders = array_values(array_slice($npData[0], 2));
         .chp-results { margin-top: 20px; }
         .chp-stats   { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px; }
         .stat-box    { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px; border-radius: 8px; text-align: center; }
+        [data-copy-price], [data-copy-name] { cursor: copy; }
+        [data-copy-price]:hover, [data-copy-name]:hover { outline: 2px solid #ffb300; outline-offset: 1px; }
+        [data-copy-name] { text-decoration: underline dotted; }
         .stat-box .value { font-size: 1.4em; font-weight: bold; display: block; }
         .stat-box .label { font-size: 0.85em; opacity: 0.9; }
         .chp-table   { width: 100%; border-collapse: collapse; font-size: 0.85em; }
@@ -337,14 +346,14 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                             $avgPrice = !empty($prices) ? array_sum($prices) / count($prices) : 0;
                             ?>
                             <div class="chp-stats">
-                                <div class="stat-box"><span class="value"><?= number_format($minPrice, 2) ?> ₪</span><span class="label">מחיר מינימום</span></div>
-                                <div class="stat-box"><span class="value"><?= number_format($avgPrice, 2) ?> ₪</span><span class="label">מחיר ממוצע</span></div>
-                                <div class="stat-box"><span class="value"><?= number_format($maxPrice, 2) ?> ₪</span><span class="label">מחיר מקסימום</span></div>
+                                <div class="stat-box" data-copy-price="<?= round($minPrice, 2) ?>" title="לחיצה מעתיקה למחיר המכירה בשורה שנבחרה"><span class="value"><?= number_format($minPrice, 2) ?> ₪</span><span class="label">מחיר מינימום</span></div>
+                                <div class="stat-box" data-copy-price="<?= round($avgPrice, 2) ?>" title="לחיצה מעתיקה למחיר המכירה בשורה שנבחרה"><span class="value"><?= number_format($avgPrice, 2) ?> ₪</span><span class="label">מחיר ממוצע</span></div>
+                                <div class="stat-box" data-copy-price="<?= round($maxPrice, 2) ?>" title="לחיצה מעתיקה למחיר המכירה בשורה שנבחרה"><span class="value"><?= number_format($maxPrice, 2) ?> ₪</span><span class="label">מחיר מקסימום</span></div>
                                 <div class="stat-box"><span class="value"><?= count($chpResults['prices']) ?></span><span class="label">חנויות</span></div>
                             </div>
                             <?php if (!empty($chpResults['productName'])): ?>
                                 <div style="background:#f8f9fa;padding:10px;border-radius:5px;margin-bottom:10px;">
-                                    <strong>שם המוצר:</strong> <?= htmlspecialchars($chpResults['productName']) ?>
+                                    <strong>שם המוצר:</strong> <span data-copy-name="<?= htmlspecialchars($chpResults['productName']) ?>" title="לחיצה מעתיקה לשם המוצר (ItemERPName) בשורה שנבחרה"><?= htmlspecialchars($chpResults['productName']) ?></span>
                                 </div>
                             <?php endif; ?>
                             <table class="chp-table">
@@ -355,7 +364,7 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                                         <tr class="<?= $isBest ? 'best-price-row' : '' ?>">
                                             <td><?= htmlspecialchars($item['chain'] ?? '') ?></td>
                                             <td><?= htmlspecialchars($item['store'] ?? '') ?></td>
-                                            <td class="price-cell">
+                                            <td class="price-cell"<?= is_numeric($item['price']) ? ' data-copy-price="' . round((float) $item['price'], 2) . '" title="לחיצה מעתיקה למחיר המכירה בשורה שנבחרה"' : '' ?>>
                                                 <?= is_numeric($item['price']) ? number_format((float)$item['price'], 2) . ' ₪' : htmlspecialchars($item['price']) ?>
                                             </td>
                                         </tr>
@@ -391,6 +400,9 @@ $npHeaders = array_values(array_slice($npData[0], 2));
         let npTableData = <?php echo json_encode(array_values($filteredRows)); ?>;
         const rowNums     = <?php echo json_encode($rowNums); ?>;
         const departments = <?php echo json_encode($departments); ?>;
+        const departmentMargins = <?php echo json_encode((object) $departmentMargins, JSON_UNESCAPED_UNICODE); ?>;
+        // The department's margin, written as soon as the department is chosen and removed when it is cleared.
+        const marginOf = name => { name = String(name ?? '').trim(); return name === '' ? '' : (departmentMargins[name] ?? 'Department not found'); };
 
         const barcodeColIdx         = npHeaders.indexOf('Barcode');
         const itemERPNameColIdx     = npHeaders.indexOf('ItemERPName');
@@ -405,6 +417,7 @@ $npHeaders = array_values(array_slice($npData[0], 2));
         );
 
         const dirtyRows      = new Set();
+        let activeRow = -1;   // the last row selected in the table — where a click in the price search copies to
         const highlightedCells = new Map(); // "row,col" → true; tracks bidirectional calc output
 
         // ── Barcode renderer ────────────────────────────────────────────────
@@ -428,12 +441,29 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                 col.strict     = false;
                 col.visibleRows = 8;
             }
-            if (idx === salePriceColIdx || idx === actualMarginColIdx) {
+            if (idx === salePriceColIdx) {
                 col.type = 'numeric';
                 col.numericFormat = { pattern: '0.00' };
             }
             return col;
         });
+
+        // ── The last column: a button that sets the sale price by the department's margin ──
+        const priceBtnColIdx = npHeaders.length;
+        function priceBtnRenderer(hotInstance, TD, row) {
+            const ok = marginOf(hotInstance.getDataAtCell(row, deptNameColIdx)).endsWith('%') && parseFloat(hotInstance.getDataAtCell(row, actualUnitPriceColIdx)) > 0;
+            TD.innerHTML = '<button type="button" tabindex="-1" style="font-size:11px;padding:2px 6px;border-radius:4px;border:1px solid #667eea;background:' + (ok ? '#667eea;color:#fff;cursor:pointer' : '#eee;color:#999;cursor:not-allowed') + '">מחיר לפי מרווח</button>';
+            TD.style.textAlign = 'center';
+            TD.title = ok ? 'מחיר המכירה = מחיר הקנייה, בתוספת מרווח המחלקה ומע"מ' : 'צריך מחלקה (עם מרווח) ומחיר קנייה';
+        }
+        columns.push({ readOnly: true, renderer: priceBtnRenderer, width: 105 });
+        function priceByDepartment(row) {
+            const m = parseFloat(marginOf(hot.getDataAtCell(row, deptNameColIdx))), cost = parseFloat(hot.getDataAtCell(row, actualUnitPriceColIdx));
+            if (isNaN(m) || m >= 100 || !(cost > 0)) return;
+            // the same formula as typing the margin by hand: cost / (1 - margin) + VAT
+            // rounded up to a whole shekel (282.51 → 283); the small epsilon keeps an exact 283.00 from becoming 284
+            hot.setDataAtCell(row, salePriceColIdx, Math.ceil((cost / (1 - m / 100)) * 1.18 - 1e-9));
+        }
 
         // ── Height ─────────────────────────────────────────────────────────
         function hotHeight() {
@@ -444,7 +474,7 @@ $npHeaders = array_values(array_slice($npData[0], 2));
         // ── Handsontable init ───────────────────────────────────────────────
         const hot = new Handsontable(document.getElementById('hotContainer'), {
             data:               npTableData,
-            colHeaders:         npHeaders,
+            colHeaders:         npHeaders.concat(['מחיר לפי מרווח']),
             columns:            columns,
             rowHeaders:         true,
             height:             hotHeight(),
@@ -483,13 +513,15 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                     if (!editableCols.has(col)) return;
                     dirtyRows.add(row);
 
-                    if (col === salePriceColIdx) {
+                    if (col === deptNameColIdx && deptMarginColIdx >= 0) {
+                        hot.setDataAtCell(row, deptMarginColIdx, marginOf(newVal), 'calculated');
+                    } else if (col === salePriceColIdx) {
                         const actualUP  = parseFloat(hot.getDataAtCell(row, actualUnitPriceColIdx)) || 0;
                         const salePrice = parseFloat(newVal) || 0;
                         if (salePrice > 0 && actualUP > 0) {
                             const exVAT     = salePrice / 1.18;
                             const margin    = ((exVAT - actualUP) / exVAT) * 100;
-                            hot.setDataAtCell(row, actualMarginColIdx, parseFloat(margin.toFixed(2)), 'calculated');
+                            hot.setDataAtCell(row, actualMarginColIdx, parseFloat(margin.toFixed(2)) + '%', 'calculated');   // as calculate_margins.php writes it
                             highlightedCells.set(`${row},${actualMarginColIdx}`, true);
                             highlightedCells.delete(`${row},${salePriceColIdx}`);
                         }
@@ -500,6 +532,7 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                         if (!isNaN(marginVal) && marginVal >= 0 && marginVal < 100 && actualUP > 0) {
                             const salePrice = parseFloat(((actualUP / (1 - marginVal / 100)) * 1.18).toFixed(2));
                             hot.setDataAtCell(row, salePriceColIdx, salePrice, 'calculated');
+                            if (String(newVal).trim() !== marginVal + '%') hot.setDataAtCell(row, actualMarginColIdx, marginVal + '%', 'calculated');   // a typed 8 is shown as 8%
                             highlightedCells.set(`${row},${salePriceColIdx}`, true);
                             highlightedCells.delete(`${row},${actualMarginColIdx}`);
                         }
@@ -507,19 +540,31 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                     }
                 });
             },
+            afterSelectionEnd(row) { if (row >= 0) activeRow = row; },
             afterOnCellMouseDown(event, coords) {
+                if (coords.col === priceBtnColIdx && coords.row >= 0) { priceByDepartment(coords.row); return; }
                 if (coords.col === barcodeColIdx && coords.row >= 0) {
                     const barcode = String(hot.getDataAtCell(coords.row, barcodeColIdx) ?? '');
                     if (!barcode) return;
                     navigator.clipboard.writeText(barcode).catch(() => {}).finally(() => {
                         document.getElementById('barcode').value = barcode;
                         const n = document.getElementById('copiedNotification');
+                        n.textContent = '✓ ברקוד הועתק בהצלחה!';
                         n.classList.add('show');
                         setTimeout(() => n.classList.remove('show'), 3000);
                     });
                 }
             }
         });
+
+        if (deptNameColIdx >= 0 && deptMarginColIdx >= 0) {
+            const fill = [];
+            for (let r = 0; r < hot.countRows(); r++) {
+                const want = marginOf(hot.getDataAtCell(r, deptNameColIdx));
+                if (hot.getDataAtCell(r, deptMarginColIdx) !== want) { fill.push([r, deptMarginColIdx, want]); dirtyRows.add(r); }
+            }
+            if (fill.length) hot.setDataAtCell(fill, 'calculated');
+        }
 
         window.addEventListener('resize', () => hot.updateSettings({ height: hotHeight() }));
 
@@ -536,6 +581,7 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                     barcode:        barcodeColIdx         >= 0 ? hot.getDataAtCell(i, barcodeColIdx)         : undefined,
                     itemERPName:    itemERPNameColIdx      >= 0 ? hot.getDataAtCell(i, itemERPNameColIdx)     : undefined,
                     departmentName: deptNameColIdx         >= 0 ? hot.getDataAtCell(i, deptNameColIdx)        : undefined,
+                    departmentMargin: deptMarginColIdx     >= 0 ? hot.getDataAtCell(i, deptMarginColIdx)      : undefined,
                     salePrice:      salePriceColIdx        >= 0 ? hot.getDataAtCell(i, salePriceColIdx)       : undefined,
                     actualMargin:   actualMarginColIdx     >= 0 ? hot.getDataAtCell(i, actualMarginColIdx)    : undefined,
                 }));
@@ -636,6 +682,27 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                 }
             });
         }
+
+        // ── A click in the price search copies into the table ────────────────
+        // A price (a store's, the minimum, average or maximum) → SalePrice of the selected row;
+        // the product's name → its ItemERPName. Written as if typed: the margin is recalculated and the row is saved.
+        function notify(text) {
+            const n = document.getElementById('copiedNotification');
+            n.textContent = text;
+            n.classList.add('show');
+            setTimeout(() => n.classList.remove('show'), 2500);
+        }
+        document.getElementById('chpResultsContainer').addEventListener('click', e => {
+            const el = e.target.closest('[data-copy-price],[data-copy-name]');
+            if (!el) return;
+            if (activeRow < 0 || activeRow >= hot.countRows()) { notify('בחרו קודם שורה בטבלה'); return; }
+            const isPrice = el.hasAttribute('data-copy-price');
+            const col = isPrice ? salePriceColIdx : itemERPNameColIdx;
+            if (col < 0) return;
+            hot.setDataAtCell(activeRow, col, isPrice ? parseFloat(el.dataset.copyPrice) : el.dataset.copyName);
+            hot.selectCell(activeRow, col);
+            notify('✓ הועתק לשורה ' + (activeRow + 1) + (isPrice ? ' — מחיר מכירה ' + el.dataset.copyPrice : ' — שם המוצר'));
+        });
 
         // ── CHP Search (AJAX) ───────────────────────────────────────────────
         document.getElementById('chpSearchForm').addEventListener('submit', function(e) {

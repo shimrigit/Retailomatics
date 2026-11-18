@@ -1,3 +1,9 @@
+<?php
+// A document that came from Retailomatics Invoice Scan returns there (to its next document);
+// otherwise, as before, to the start of this flow.
+session_start();
+$nextUrl = !empty($_SESSION['invoiceScanReturn']) ? '/website/InvoiceScan/next.php' : '/website/harmonizedFlow/start_harmonized_flow.php';
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -246,7 +252,7 @@
 
             if (countdown <= 0) {
                 clearInterval(interval);
-                window.location.href = '/website/harmonizedFlow/start_harmonized_flow.php';
+                window.location.href = <?= json_encode($nextUrl) ?>;
             }
         }, 1000);
     </script>

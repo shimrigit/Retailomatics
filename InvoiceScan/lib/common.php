@@ -1,0 +1,245 @@
+<?php
+/**
+ * common.php — Retailomatics Invoice Scan: paths, the work file of a scan, the page frame.
+ *
+ * A scan's state lives in InvoiceScan/work/<id>.json (git-ignored): the shop, the source
+ * files and where they are now, and what the AI read. confirm.php shows it, approve.php
+ * hands it to the existing OCRsanity step — and can be opened again to go one step back.
+ */
+
+require_once __DIR__ . '/InvoiceReader.php';
+
+const SCAN_ROOT = __DIR__ . '/../..';
+const SCAN_IN_DIR = SCAN_ROOT . '/preProcessDir';
+const SCAN_WORK_DIR = __DIR__ . '/../work';
+const SCAN_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png'];
+
+function scan_h($v): string
+{
+    return htmlspecialchars((string) $v, ENT_QUOTES);
+}
+
+function scan_shops(): array
+{
+    $shops = json_decode((string) @file_get_contents(SCAN_ROOT . '/configDir/shops_V2.json'), true) ?: [];
+    return array_values(array_filter(array_column($shops, 'ShopName')));
+}
+
+/**
+ * The new documents waiting in preProcessDir (its top level only), by name. A PDF that
+ * approve.php made of an approved document is not one of them — it is that document, in the
+ * middle of the flow (see scan_started()).
+ */
+function scan_waiting_files(): array
+{
+    $made = [];
+    foreach (scan_started() as $w) if (!empty($w['approved'])) $made[] = $w['approved']['pdfFile'];
+    $files = [];
+    foreach (scandir(SCAN_IN_DIR) ?: [] as $f) {
+        if (is_file(SCAN_IN_DIR . "/$f") && in_array(strtolower(pathinfo($f, PATHINFO_EXTENSION)), SCAN_EXTENSIONS, true) && !in_array($f, $made, true)) $files[] = $f;
+    }
+    natcasesort($files);
+    return array_values($files);
+}
+
+/**
+ * The documents that were started and not finished, newest first:
+ *  - read, not approved yet — its source files are still in preProcessDir;
+ *  - approved, the flow after it not finished — its PDF is still in preProcessDir (the flow's
+ *    cleanup moves the PDF to uploads/ when the document is done).
+ * One work file per document: of several readings of the same file, the latest.
+ */
+function scan_started(): array
+{
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    $byDoc = [];
+    foreach (glob(SCAN_WORK_DIR . '/*.json') ?: [] as $path) {
+        if (str_starts_with(basename($path), 'batch_')) continue;
+        $w = json_decode((string) @file_get_contents($path), true);
+        if (!is_array($w) || empty($w['files'])) continue;
+        if (!empty($w['approved'])) {
+            if (!is_file(SCAN_IN_DIR . '/' . $w['approved']['pdfFile'])) continue;   // finished (or removed)
+        } else {
+            if ($w['subdir'] !== '') continue;
+            foreach ($w['files'] as $f) if (!is_file(SCAN_IN_DIR . "/$f")) continue 2;
+        }
+        $key = empty($w['approved']) ? 'src:' . implode('|', $w['files']) : 'pdf:' . $w['approved']['pdfFile'];
+        $w['_time'] = $w['approved']['at'] ?? $w['read_at'] ?? $w['created'];
+        if (!isset($byDoc[$key]) || strcmp($w['_time'], $byDoc[$key]['_time']) > 0) $byDoc[$key] = $w;
+    }
+    // A file that is a page of an approved document is not also a "read, not approved" one.
+    usort($byDoc, fn($a, $b) => strcmp($b['_time'], $a['_time']));
+    return $cache = array_values($byDoc);
+}
+
+function scan_work_path(string $id): string
+{
+    if (!preg_match('/^[a-f0-9]{12}$/', $id)) {
+        http_response_code(400);
+        exit('Bad scan id');
+    }
+    return SCAN_WORK_DIR . "/$id.json";
+}
+
+function scan_load(string $id): array
+{
+    $work = json_decode((string) @file_get_contents(scan_work_path($id)), true);
+    if (!is_array($work)) {
+        http_response_code(404);
+        exit('הסריקה לא נמצאה. <a href="index.php">חזרה</a>');
+    }
+    return $work;
+}
+
+function scan_save(array $work): void
+{
+    @mkdir(SCAN_WORK_DIR, 0777, true);
+    file_put_contents(scan_work_path($work['id']), json_encode($work, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+}
+
+/** Full paths of a scan's source files, wherever they are now (preProcessDir or its TempPP). */
+function scan_source_paths(array $work): array
+{
+    return array_map(fn($f) => SCAN_IN_DIR . ($work['subdir'] !== '' ? "/{$work['subdir']}" : '') . "/$f", $work['files']);
+}
+
+function scan_source_url(array $work, string $file): string
+{
+    return '../preProcessDir/' . ($work['subdir'] !== '' ? rawurlencode($work['subdir']) . '/' : '') . rawurlencode($file);
+}
+
+function scan_page_start(string $title, bool $wide = false): void
+{
+    echo '<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        . '<title>' . scan_h($title) . ' · Retailomatics Invoice Scan</title><style>
+body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#f4f5f7;color:#1c2330;font-size:15px}
+header{background:#1d3557;color:#fff;padding:12px 24px;display:flex;gap:16px;align-items:baseline}
+header b{font-size:18px}header span{opacity:.8}header a{color:#cfe0ff;margin-inline-start:auto}
+main{padding:18px 24px;max-width:1500px;margin:0 auto}main.wide{max-width:none;padding:12px 16px}
+.card{background:#fff;border:1px solid #d9dde3;border-radius:8px;padding:16px;margin-bottom:16px}
+h2{font-size:17px;margin:0 0 12px}
+table{border-collapse:collapse}th,td{border:1px solid #d9dde3;padding:5px 9px;text-align:right;vertical-align:top}
+th{background:#eef1f5;font-weight:600;white-space:nowrap}
+.num{direction:ltr;text-align:left;white-space:nowrap;font-variant-numeric:tabular-nums}
+input[type=text],input[type=date],input[type=number],select{font:inherit;padding:6px 8px;border:1px solid #b9c0cb;border-radius:5px;background:#fff;min-width:200px}
+button,.btn{font:inherit;padding:9px 18px;border-radius:6px;border:1px solid #1d3557;background:#1d3557;color:#fff;cursor:pointer;text-decoration:none;display:inline-block}
+button.second,.btn.second{background:#fff;color:#1d3557}
+button:disabled{opacity:.5;cursor:wait}
+.ok{color:#1b7a3a;font-weight:600}.warn{color:#b3261e;font-weight:600}.mute{color:#75808f}
+.bad td{background:#fde8e6}
+.files{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.file{border:1px solid #d9dde3;border-radius:6px;padding:8px;background:#fafbfc;display:flex;flex-direction:column;gap:6px;cursor:pointer}
+.file img,.file .pdf{width:100%;height:300px;object-fit:cover;object-position:top;border-radius:4px;background:#e7eaef}
+.file .pdf{display:flex;align-items:center;justify-content:center;font-size:34px;color:#8a93a0}
+.file span{font-size:12px;word-break:break-all;direction:ltr;text-align:left}
+.file:has(input:checked){border-color:#1d3557;background:#e8eefb;outline:2px solid #1d3557}
+.split{display:flex;gap:16px;align-items:flex-start}
+.split .src{flex:0 0 50%;min-width:0;position:sticky;top:8px;height:calc(100vh - 16px);overflow:auto;background:#fff;border:1px solid #c8cdd5;border-radius:6px}
+.split .src img{width:100%;display:block;margin-bottom:6px;cursor:zoom-in}.split .src.zoom img{width:200%;max-width:none;cursor:zoom-out}
+.split .src .tools{position:sticky;top:0;background:#eef1f5;padding:5px 10px;font-size:13px;border-bottom:1px solid #c8cdd5;z-index:2}
+.split .src iframe{width:100%;height:calc(100vh - 60px);border:0}
+.split .data{flex:1 1 50%;min-width:0}
+@media(max-width:1000px){.split{flex-direction:column}.split .src{flex:none;width:100%;position:static;height:70vh}}
+.form th{width:1%}.form td small{display:block;color:#75808f;margin-top:3px}
+#busy{display:none;position:fixed;inset:0;background:rgba(244,245,247,.92);z-index:9;align-items:center;justify-content:center;flex-direction:column;gap:14px;font-size:18px}
+#busy.on{display:flex}.spin{width:44px;height:44px;border:5px solid #c8d2e3;border-top-color:#1d3557;border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style></head><body><header><b>Retailomatics Invoice Scan</b><span>' . scan_h($title) . '</span>'
+        . (empty($_SESSION['invoiceScanBatch']) ? '' : '<a style="margin-inline-start:24px" href="batch.php?b=' . scan_h($_SESSION['invoiceScanBatch']) . '">רשימת המסמכים</a>')
+        . '<a href="../harmonizedFlow/start_harmonized_flow.php">התהליך הקודם (Harmonized Flow)</a></header><main' . ($wide ? ' class="wide"' : '') . '>';
+}
+
+function scan_page_end(): void
+{
+    echo '</main><div id="busy"><div class="spin"></div><div id="busyText">קורא את המסמך…</div></div></body></html>';
+}
+
+// ── a batch: the documents chosen together in index.php ─────────────────────
+// InvoiceScan/work/batch_<id>.json = {id, shop, created, pages: {file: read | {error}}, docs: [work ids]}.
+// Every file is read on its own; pages of one supplier and date are shown to the user to say
+// whether they are one document or several (group.php); then each document gets its work file.
+
+function scan_batch_path(string $id): string
+{
+    if (!preg_match('/^[a-f0-9]{12}$/', $id)) {
+        http_response_code(400);
+        exit('Bad batch id');
+    }
+    return SCAN_WORK_DIR . "/batch_$id.json";
+}
+
+function scan_batch_load(string $id): array
+{
+    $batch = json_decode((string) @file_get_contents(scan_batch_path($id)), true);
+    if (!is_array($batch)) {
+        http_response_code(404);
+        exit('Batch not found. <a href="index.php">index</a>');
+    }
+    return $batch;
+}
+
+function scan_batch_save(array $batch): void
+{
+    @mkdir(SCAN_WORK_DIR, 0777, true);
+    file_put_contents(scan_batch_path($batch['id']), json_encode($batch, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+}
+
+/** Who issued a page, for grouping: the suppliers.json key, else the VAT id, else the printed name. Empty = unknown. */
+function scan_issuer(array $data): string
+{
+    $match = InvoiceReader::matchSupplier($data);
+    if ($match['supplier']) return 'key:' . $match['supplier']['supplierName'];
+    if ($data['supplier_vat_id'] !== '') return 'vat:' . $data['supplier_vat_id'];
+    $name = preg_replace('/[^\p{L}\p{N}]+/u', '', $data['supplier_name_printed']);
+    return $name !== '' ? 'name:' . $name : '';
+}
+
+/**
+ * The pages that may belong together: photos (a PDF is always a whole document) of the same
+ * issuer and date, two or more. [[file, ...], ...]
+ */
+function scan_batch_groups(array $batch): array
+{
+    $groups = [];
+    foreach ($batch['pages'] as $file => $read) {
+        if (isset($read['error']) || strtolower(pathinfo($file, PATHINFO_EXTENSION)) === 'pdf') continue;
+        $issuer = scan_issuer($read['data']);
+        if ($issuer === '' || $read['data']['doc_date'] === '') continue;
+        $groups[$issuer . '|' . $read['data']['doc_date']][] = $file;
+    }
+    return array_values(array_filter($groups, fn($g) => count($g) > 1));
+}
+
+/**
+ * The batch's documents, each with its work file. $assign: file => a label; files with the
+ * same label are the pages of one document (in the order of the batch); a file without a
+ * label is a document of its own.
+ */
+function scan_batch_build_docs(array $batch, array $assign): array
+{
+    $docs = [];
+    foreach ($batch['pages'] as $file => $read) {
+        if (isset($read['error'])) continue;
+        $docs[isset($assign[$file]) ? 'L:' . $assign[$file] : 'F:' . $file][] = $file;
+    }
+    $batch['docs'] = [];
+    foreach ($docs as $files) {
+        $reads = array_map(fn($f) => $batch['pages'][$f], $files);
+        $work = ['id' => bin2hex(random_bytes(6)), 'shop' => $batch['shop'], 'files' => $files, 'subdir' => '', 'created' => date('c'),
+            'batch' => $batch['id'], 'read' => count($reads) === 1 ? $reads[0] : InvoiceReader::merge($reads), 'read_at' => date('c')];
+        scan_save($work);
+        $batch['docs'][] = $work['id'];
+    }
+    scan_batch_save($batch);
+    return $batch;
+}
+
+/** Where a batch continues: the first document not approved yet (photo next to its data), else the list. */
+function scan_batch_next_url(array $batch): string
+{
+    foreach ($batch['docs'] as $docId) {
+        if (empty(scan_load($docId)['approved'])) return 'confirm.php?id=' . $docId;
+    }
+    return 'batch.php?b=' . $batch['id'];
+}

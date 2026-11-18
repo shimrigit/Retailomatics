@@ -9,6 +9,24 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Color;
 
 /**
+ * Retailomatics Invoice Scan (InvoiceScan/approve.php) reads the whole page with the AI and
+ * lets the user approve the invoice type and the columns; it leaves them in the session as
+ * harmonizedFlow.scanOverride = ['method' => ..., 'mapping' => [field => property number]].
+ * When that is there, it replaces the supplier's own OCRsanityMethod / jsonToOcrSanity for
+ * this run (and no auto-detection). Without it — the old flow — nothing changes.
+ */
+function applyInvoiceScanOverride($supplierConfig) {
+    $override = $_SESSION['harmonizedFlow']['scanOverride'] ?? null;
+    if ($supplierConfig === null || !is_array($override) || empty($override['method']) || empty($override['mapping'])) {
+        return $supplierConfig;
+    }
+    $supplierConfig['OCRsanityMethod'] = $override['method'];
+    $supplierConfig['jsonToOcrSanity'] = $override['mapping'];
+    $supplierConfig['autoDetectMapping'] = false;
+    return $supplierConfig;
+}
+
+/**
  * Apply sanity verification to the OCRsanity spreadsheet
  *
  * @param \PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet The worksheet to verify
@@ -437,6 +455,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['ocr_json']) && isset
                 break;
             }
         }
+        $supplierConfig = applyInvoiceScanOverride($supplierConfig);
 
         // Validation 1: Check if supplier exists
         if ($supplierConfig === null) {
@@ -657,6 +676,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['ocr_json']) && isset
                 break;
             }
         }
+        $supplierConfig = applyInvoiceScanOverride($supplierConfig);
 
         if ($supplierConfig === null) {
             $statusMessage = "Supplier {$supplierName} does not exist in suppliers.json config file";

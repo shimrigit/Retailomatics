@@ -142,7 +142,8 @@
             "Qty": 3,
             "UnitPrice": 2,
             "LineTotal": 1
-        }
+        },
+        "vatId": "5151668920"
     },
     {
         "supplierName": "TnuvaMeat",
@@ -511,7 +512,11 @@
             "Qty": 3,
             "UnitPrice": 6,
             "LineTotal": 7
-        }
+        },
+        "vatId": "510432768",
+        "aliases": [
+            "מ.אקרמן בע\"מ"
+        ]
     },
     {
         "supplierName": "Ida",
@@ -575,7 +580,8 @@
             "Qty": 3,
             "UnitPrice": 2,
             "LineTotal": 1
-        }
+        },
+        "vatId": "516398179"
     },
     {
         "supplierName": "HadarSharon",
@@ -684,7 +690,11 @@
             "Qty": 3,
             "UnitPrice": 6,
             "LineTotal": 7
-        }
+        },
+        "vatId": "511738650",
+        "aliases": [
+            "שמחה זה אנחנו בע״מ"
+        ]
     },
     {
         "supplierName": "Diarai",
@@ -708,6 +718,10 @@
             "Qty": 5,
             "UnitPrice": 8,
             "LineTotal": 9
-        }
+        },
+        "vatId": "512374844",
+        "aliases": [
+            "ק.א שוקולד בע\"מ"
+        ]
     }
 ]

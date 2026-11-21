@@ -78,7 +78,7 @@ function seriesSave(string $shop, array $data, string $drive = 'Z'): void
  * (by barcode), moves the previous series.json to History, and returns the
  * new data with 'changes' against the previous split.
  */
-function seriesSplit(string $shop, string $drive = 'Z'): array
+function seriesSplit(string $shop, string $drive = 'Z', bool $rebuild = false): array
 {
     $dl = seriesLatestDownload($shop, $drive);
     if (!$dl) throw new RuntimeException('אין הורדה של רשימת מוצרים ומחירים ב-' . seriesListDir($shop, $drive) . ' — הורד מה-Gateway של קומקס');
@@ -90,12 +90,22 @@ function seriesSplit(string $shop, string $drive = 'Z'): array
         $cpd = new CPDClient();
         if ($cpd->available()) $manufacturerOf = fn($bc) => strlen($bc) >= 7 ? (string) ($cpd->card($bc)['manufacturer'] ?? '') : '';
     }
-    $result = seriesBuild($items, $manufacturerOf);
-
     $prev = seriesLoad($shop, $drive);
     $decisions = $prev['decisions'] ?? [];
-    $changes = null;
-    if ($prev) {
+    // Renamed items (rename.php): split by the new name — it is the name the shop wants; the
+    // rename waits in name_fixes.json for the Gateway, and is dropped once Comax shows it.
+    foreach ($items as &$it) {
+        $ren = $decisions[$it['barcode']]['rename'] ?? null;
+        if ($ren === null) continue;
+        if (seriesNorm($ren) === seriesNorm($it['name'])) { unset($decisions[$it['barcode']]['rename'], $decisions[$it['barcode']]['renameAt']); continue; }
+        $it['comaxName'] = $it['name'];
+        $it['name'] = $ren;
+    }
+    unset($it);
+    $result = seriesBuild($items, $manufacturerOf);
+
+    $changes = $rebuild ? ($prev['changes'] ?? null) : null;
+    if ($prev && !$rebuild) {
         $old = [];
         foreach (array_merge(...array_map(fn($s) => $s['items'], $prev['result']['series'] ?? [])) as $it) $old[$it['barcode']] = $it;
         foreach ($prev['result']['loose'] ?? [] as $it) $old[$it['barcode']] = $it;
@@ -111,12 +121,13 @@ function seriesSplit(string $shop, string $drive = 'Z'): array
             if (isset($d['fixPrice'], $new[$bc]) && abs($new[$bc]['price'] - $d['fixPrice']) < 0.001) unset($d['fixPrice']);
         }
         unset($d);
-        $decisions = array_filter($decisions, fn($d) => ($d['assign'] ?? '') !== '' || isset($d['fixPrice']));
 
         $hist = seriesDir($shop, $drive) . '/History';
         if (!is_dir($hist)) mkdir($hist, 0777, true);
         @copy(seriesDir($shop, $drive) . '/series.json', $hist . '/series ' . date('Y-m-d His', strtotime($prev['meta']['built'] ?? 'now')) . '.json');
     }
+
+    $decisions = array_filter($decisions, fn($d) => ($d['assign'] ?? '') !== '' || isset($d['fixPrice']) || isset($d['rename']));
 
     $data = [
         'meta' => ['shop' => $shop, 'built' => date('Y-m-d H:i:s'), 'source' => $dl['name'], 'sourceTime' => date('Y-m-d H:i:s', $dl['mtime'])],
@@ -126,7 +137,29 @@ function seriesSplit(string $shop, string $drive = 'Z'): array
     ];
     seriesSave($shop, $data, $drive);
     seriesWritePriceFixes($shop, $data, $drive);
+    seriesWriteNameFixes($shop, $data, $drive);
     return $data;
+}
+
+/**
+ * Series
+ame_fixes.json — item renames for the Comax Gateway (rename.php), rewritten after every change:
+ *   {"shop", "updated", "fixes": [{"barcode", "code", "oldName", "newName", "created"}]}
+ * A rename leaves the file when a new download shows Comax has the new name.
+ */
+function seriesWriteNameFixes(string $shop, array $data, string $drive = 'Z'): void
+{
+    $byBc = [];
+    foreach ($data['result']['series'] as $s) foreach ($s['items'] as $it) $byBc[$it['barcode']] = $it;
+    foreach ($data['result']['loose'] as $it) $byBc[$it['barcode']] = $it;
+    $fixes = [];
+    foreach ($data['decisions'] ?? [] as $bc => $d) {
+        if (!isset($d['rename'], $byBc[$bc])) continue;
+        $it = $byBc[$bc];
+        $fixes[] = ['barcode' => (string) $bc, 'code' => (string) $it['code'], 'oldName' => $it['comaxName'] ?? $it['name'],
+            'newName' => $d['rename'], 'created' => $d['renameAt'] ?? ''];
+    }
+    file_put_contents(seriesDir($shop, $drive) . '/name_fixes.json', json_encode(['shop' => $shop, 'updated' => date('Y-m-d H:i:s'), 'fixes' => $fixes], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
 /** The item's price for the series: the fixed price when the user set one. */
@@ -192,4 +225,85 @@ function seriesWritePriceFixes(string $shop, array $data, string $drive = 'Z'): 
     }
     $out = ['shop' => $shop, 'updated' => date('Y-m-d H:i:s'), 'fixes' => $fixes];
     file_put_contents(seriesDir($shop, $drive) . '/price_fixes.json', json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+// ── Products waiting for a price (NP's final screen: no series fits and no price given) ──
+// Series\waiting_price.json: [{barcode, name, date, npDir, image, added}] — kept per barcode.
+
+function seriesWaitingPath(string $shop, string $drive = 'Z'): string
+{
+    return seriesDir($shop, $drive) . '/waiting_price.json';
+}
+
+function seriesWaitingLoad(string $shop, string $drive = 'Z'): array
+{
+    $list = json_decode((string) @file_get_contents(seriesWaitingPath($shop, $drive)), true);
+    return is_array($list) ? $list : [];
+}
+
+/** Adds (or refreshes, by barcode) products waiting for a price. */
+function seriesWaitingAdd(string $shop, array $items, string $drive = 'Z'): void
+{
+    if (!$items) return;
+    $dir = seriesDir($shop, $drive);
+    if (!is_dir($dir) && !mkdir($dir, 0777, true)) throw new RuntimeException("לא ניתן ליצור את $dir");
+    $list = array_column(seriesWaitingLoad($shop, $drive), null, 'barcode');
+    foreach ($items as $it) $list[(string) $it['barcode']] = $it + ['added' => date('Y-m-d H:i:s')];
+    file_put_contents(seriesWaitingPath($shop, $drive), json_encode(array_values($list), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+function seriesWaitingRemove(string $shop, array $barcodes, string $drive = 'Z'): void
+{
+    $list = array_values(array_filter(seriesWaitingLoad($shop, $drive), fn($it) => !in_array((string) $it['barcode'], array_map('strval', $barcodes), true)));
+    file_put_contents(seriesWaitingPath($shop, $drive), json_encode($list, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+/**
+ * The pricing options for products without a price (NP's final screen), from the shop's split:
+ * $items [{barcode, name}] → [barcode => [{kind, title, price, prices, conflict, loose, sizeFit, count, examples}]].
+ * null when the shop has no split.
+ */
+function seriesPriceOptions(string $shop, array $items, string $drive = 'Z', int $max = 6): ?array
+{
+    $data = seriesLoad($shop, $drive);
+    if (!$data) return null;
+    $result = seriesApply($data);
+    $cpd = null;
+    if (is_file(__DIR__ . '/../commercialLayer/cpd_client.php')) {
+        require_once __DIR__ . '/../commercialLayer/cpd_client.php';
+        $cpd = new CPDClient();
+        if (!$cpd->available()) $cpd = null;
+    }
+    $out = [];
+    foreach ($items as $it) {
+        $bc = (string) $it['barcode'];
+        $man = $cpd && strlen($bc) >= 7 ? (string) ($cpd->card($bc)['manufacturer'] ?? '') : '';
+        $opts = [];
+        foreach (array_slice(seriesCandidates(['barcode' => $bc, 'name' => (string) $it['name'], 'manufacturer' => $man], $result), 0, $max) as $c) {
+            if ($c['type'] === 'series') {
+                $s = $c['series'];
+                $opts[] = ['kind' => 'series', 'title' => 'סדרה ' . $s['id'] . ': ' . ($s['brand'] ?: 'ללא יצרן') . ' · ' . $s['line'] . ' · ' . $s['sizeText'],
+                    'price' => $s['price'], 'prices' => $s['prices'], 'conflict' => $s['conflict'], 'loose' => !empty($c['loose']),
+                    'sizeFit' => $c['sizeFit'], 'count' => count($s['items']),
+                    'like' => 'כמו ' . seriesLikeName($s['items'], (string) $it['name'], $bc) . (count($s['items']) > 1 ? ' (סדרה של ' . count($s['items']) . ' מוצרים)' : ''),
+                    'examples' => array_map(fn($i) => $i['name'] . ' — ' . number_format((float) ($i['effPrice'] ?? $i['price']), 2), array_slice($s['items'], 0, 4))];
+            } else {
+                $i = $c['item'];
+                $opts[] = ['kind' => 'single', 'barcode' => (string) $i['barcode'], 'title' => 'פריט בודד: ' . $i['name'], 'like' => 'כמו ' . $i['name'], 'price' => $i['price'], 'prices' => [], 'conflict' => false,
+                    'loose' => !empty($c['loose']), 'sizeFit' => $c['sizeFit'], 'count' => 1, 'examples' => []];
+            }
+        }
+        $out[$bc] = $opts;
+    }
+    return $out;
+}
+
+/** The series' product most like $name (for "כמו <product>" in the summary to the shop owner). */
+function seriesLikeName(array $items, string $name, string $barcode = ''): string
+{
+    // not the product itself (it may already be in the price list, in that series)
+    $others = array_values(array_filter($items, fn($i) => (string) $i['barcode'] !== $barcode));
+    if ($others) $items = $others;
+    usort($items, fn($a, $b) => seriesNameSimilarity($name, $b['name']) <=> seriesNameSimilarity($name, $a['name']));
+    return $items[0]['name'];
 }

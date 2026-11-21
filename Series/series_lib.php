@@ -292,6 +292,27 @@ function seriesCandidates(array $item, array $result): array
         if ($fit === false) continue;
         $out[] = ['type' => 'single', 'item' => $it, 'price' => $it['price'], 'score' => seriesNameSimilarity($item['name'], $it['name']), 'sizeFit' => $fit];
     }
+    // Nothing of the same brand + line: the shop may name it otherwise — another brand (the
+    // product's brand is a sub-brand: דוריטוס of עלית) or another first word ("חטיף דוריטוס").
+    // Then: series / single items whose names contain the product's line word, size fitting.
+    // Marked 'loose' — a weaker match, for the user to judge.
+    if (!$out) {
+        $word = explode(' ', $line)[0];
+        $has = fn($name) => mb_strlen($word) >= 3 && preg_match('/(^|\s)' . preg_quote($word, '/') . '(\s|$)/u', seriesNorm($name));
+        foreach ($result['series'] as $s) {
+            $hit = array_filter($s['items'], fn($it) => $has($it['name']) && $fits($size, $it['size']) !== false);
+            if (!$hit) continue;
+            $fit = $size ? (bool) array_filter($hit, fn($it) => $fits($size, $it['size']) === true) : null;
+            $score = max(array_map(fn($it) => seriesNameSimilarity($item['name'], $it['name']), $hit));
+            $out[] = ['type' => 'series', 'series' => $s, 'price' => $s['price'], 'score' => $score, 'sizeFit' => $fit, 'loose' => true];
+        }
+        foreach ($result['loose'] as $it) {
+            if ($it['price'] <= 0 || $it['barcode'] === $item['barcode'] || !$has($it['name'])) continue;
+            $fit = $fits($size, $it['size'] ?? null);
+            if ($fit === false) continue;
+            $out[] = ['type' => 'single', 'item' => $it, 'price' => $it['price'], 'score' => seriesNameSimilarity($item['name'], $it['name']), 'sizeFit' => $fit, 'loose' => true];
+        }
+    }
     // a series with a known size fit first, then by how alike the names are
     usort($out, fn($a, $b) => [$b['sizeFit'] === true, $b['type'] === 'series', $b['score']] <=> [$a['sizeFit'] === true, $a['type'] === 'series', $a['score']]);
     return $out;

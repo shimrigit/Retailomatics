@@ -5,6 +5,10 @@ sort($shopNames);
 require_once __DIR__ . '/shop_settings.php';
 $shopSettings = [];
 foreach ($shopNames as $s) $shopSettings[$s] = npShopSettings($s);
+// products waiting for a price, per shop (Series/waiting.php)
+require_once __DIR__ . '/../Series/store.php';
+$waitCounts = [];
+foreach ($shopNames as $s) $waitCounts[$s] = count(seriesWaitingLoad($s));
 $today = date('Y-m-d');
 ?>
 <!DOCTYPE html>
@@ -58,6 +62,7 @@ $today = date('Y-m-d');
             <label class="chk"><input type="checkbox" id="opt_customName" data-key="customName"> שם מוצר לפי העדפת משתמש</label>
             <div class="opt-note" id="nameNote"></div>
             <div class="opt-saved" id="optSaved"></div>
+            <div class="opt-note" id="waitNote" style="margin-right:0"></div>
         </div>
 
         <label for="root_letter">אות כונן ראשי</label>
@@ -100,6 +105,7 @@ $today = date('Y-m-d');
 <script>
 // Per-shop options (shop_settings.php): shown once a shop is picked, with its
 // last state; each change is saved at once, and the stages read it by shop.
+var WAIT_COUNTS = <?= json_encode($waitCounts, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?>;
 var SHOP_SETTINGS = <?= json_encode($shopSettings, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?>;
 var shopSel = document.getElementById('shop');
 function showShopOpts() {
@@ -111,6 +117,8 @@ function showShopOpts() {
         ? 'הכלל: ' + s.namePrompt
         : 'לחנות זו אין עדיין כלל שמות (configDir/np_shop_settings.json, namePrompt) — השם יישאר בסגנון הרגיל';
     document.getElementById('optSaved').textContent = '';
+    var w = WAIT_COUNTS[shop] || 0;
+    document.getElementById('waitNote').innerHTML = shop ? '<a href="../Series/waiting.php?shop=' + encodeURIComponent(shop) + '" target="_blank">מוצרים שמחכים למחיר: ' + w + '</a>' : '';
 }
 shopSel.addEventListener('change', showShopOpts);
 document.querySelectorAll('#shopOpts input[type="checkbox"]').forEach(function (box) {

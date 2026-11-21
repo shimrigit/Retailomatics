@@ -29,7 +29,7 @@ foreach ($series['items'] as $it) {
     } else {
         $errors[] = $it['name'] . ': "' . $f . '" אינו מחיר';
     }
-    if ($d['assign'] === '' && !isset($d['fixPrice'])) unset($data['decisions'][$bc]);
+    if ($d['assign'] === '' && !isset($d['fixPrice']) && !isset($d['rename'])) unset($data['decisions'][$bc]);
     else $data['decisions'][$bc] = $d;
 }
 seriesSave($shop, $data);

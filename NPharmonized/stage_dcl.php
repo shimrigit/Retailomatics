@@ -60,8 +60,11 @@ foreach ($products as $p) {
     $barcode  = trim((string)$sheet->getCell('A' . $row)->getValue());
     $maxP     = trim((string)$sheet->getCell('D' . $row)->getValue());
     $minP     = trim((string)$sheet->getCell('E' . $row)->getValue());
-    $saleP    = (float)$sheet->getCell('F' . $row)->getValue();
-    if ($maxP === '' || $maxP === 'NA' || $minP === '' || $minP === 'NA') {
+    $rawF     = trim((string)$sheet->getCell('F' . $row)->getValue());
+    $saleP    = (float)$rawF;
+    if ($rawF !== '' && !is_numeric($rawF)) {   // "X" — the customer wrote סדרה: priced on this screen
+        $priceChecks[$row] = ['barcode' => $barcode, 'sale' => 0, 'status' => 'x'];
+    } elseif ($maxP === '' || $maxP === 'NA' || $minP === '' || $minP === 'NA') {
         $priceChecks[$row] = ['barcode' => $barcode, 'sale' => $saleP, 'status' => 'na'];
     } else {
         $max  = (float)str_replace(',', '', $maxP);
@@ -81,8 +84,9 @@ $statusLabel = [
     'above' => 'מעל המקסימום',
     'below' => 'מתחת למינימום',
     'na'    => 'אין נתוני השוואה',
+    'x'     => 'X — מחיר לפי סדרה',
 ];
-$statusClass = ['ok' => 'st-ok', 'above' => 'st-bad', 'below' => 'st-bad', 'na' => 'st-na'];
+$statusClass = ['ok' => 'st-ok', 'above' => 'st-bad', 'below' => 'st-bad', 'na' => 'st-na', 'x' => 'st-na'];
 
 // ── Classify (skipped for a shop with "ללא סיווג למחלקות" — the button below does it by hand) ──
 $shopOpts   = npShopSettings($shop);
@@ -110,7 +114,7 @@ foreach ($products as $p) {
 
     // "Failed to pass" (FTP): checksum failed, OR CHPF returned no data (na),
     // OR the sale price is outside the CHP min/max range.
-    $isFtp = !$checksumOk || $status !== 'ok';
+    $isFtp = !$checksumOk || !in_array($status, ['ok', 'x'], true);
 
     $finalRows[] = [
         'row'        => $row,
@@ -124,6 +128,7 @@ foreach ($products as $p) {
         'checksumOk' => $checksumOk,
         'fname'      => $fname,
         'isFtp'      => $isFtp,
+        'isX'        => $status === 'x',
     ];
 }
 $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
@@ -216,6 +221,15 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
     <span id="dclMsg"></span>
 </div>
 
+<?php $xCount = count(array_filter($finalRows, fn($r) => $r['isX'])); if ($xCount): ?>
+<div class="dcl-box" id="spBox" style="background:#fff3e0;border-color:#ffb74d">
+    <span><b><?= $xCount ?> מוצרים במחיר X</b> (הלקוח כתב "סדרה").</span>
+    <label><input type="checkbox" id="spAll" checked> כולם</label>
+    <button type="button" class="btn-dcl" id="spGo">תן מחיר לפי סדרה</button>
+    <span id="spMsg"></span>
+</div>
+<?php endif; ?>
+
 <form action="stage_dcl_save.php" method="post">
     <input type="hidden" name="np_dir"    value="<?= htmlspecialchars($npDir) ?>">
     <input type="hidden" name="xlsx_file" value="<?= htmlspecialchars($xlsxFile) ?>">
@@ -248,7 +262,7 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
             <th>הערת AI</th>
         </tr>
         <?php foreach ($finalRows as $i => $r): ?>
-        <tr data-row="<?= $r['row'] ?>">
+        <tr data-row="<?= $r['row'] ?>"<?= $r['isX'] ? ' data-xrow data-barcode="' . htmlspecialchars($r['barcode']) . '"' : '' ?>>
             <td><?= $i + 1 ?></td>
             <td>
                 <input class="edit" type="text" name="barcode[<?= $r['row'] ?>]" value="<?= htmlspecialchars($r['barcode']) ?>"
@@ -258,7 +272,7 @@ $ftpRows = array_values(array_filter($finalRows, fn($r) => $r['isFtp']));
                 <?= $r['checksumOk'] ? '✔' : '✘' ?>
             </td>
             <td><input class="edit" type="text" name="name[<?= $r['row'] ?>]" value="<?= htmlspecialchars($r['name']) ?>"></td>
-            <td class="price-cell"><?= number_format($r['price'], 2) ?></td>
+            <td class="price-cell"><?php if ($r['isX']): ?><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" class="sp-pick" checked title="לתמחור לפי סדרה"><input class="sp-price" type="text" inputmode="decimal" name="price[<?= $r['row'] ?>]" placeholder="X"></label><input type="hidden" class="sp-noprice" name="noprice[<?= $r['row'] ?>]" value=""><?php else: ?><?= number_format($r['price'], 2) ?><?php endif; ?></td>
             <td class="<?= $statusClass[$r['status']] ?>"><?= $statusLabel[$r['status']] ?></td>
             <td>
                 <input class="edit" type="text" name="deptnum[<?= $r['row'] ?>]" value="<?= htmlspecialchars((string)$r['deptNum']) ?>"
@@ -366,6 +380,7 @@ function zoom(id, f) {
     img.style.width = Math.round(img.offsetWidth * f) + 'px';
 }
 
+window.SERIES_PRICE = { shop: <?= json_encode($shop, JSON_UNESCAPED_UNICODE) ?>, drive: <?= json_encode(strtoupper(substr($npDir, 0, 1))) ?>, cols: 9 };
 const NUM_TO_NAME = <?= json_encode($numToName, JSON_UNESCAPED_UNICODE) ?>;
 
 // Classifies the names as they are in the table now (dcl_classify.php) and
@@ -440,5 +455,6 @@ function syncChecksum(input) {
     cell.classList.toggle('cs-bad', !ok);
 }
 </script>
+<script src="series_price.js"></script>
 </body>
 </html>

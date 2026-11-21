@@ -5,6 +5,7 @@
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/barcode_validate.php';
 require_once __DIR__ . '/xlsx_retry.php';
+require_once __DIR__ . '/series_summary.php';
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
@@ -23,6 +24,10 @@ $deptFile = $_POST['dept_file'] ?? '';
 $barcodes = $_POST['barcode'] ?? [];
 $names    = $_POST['name']    ?? [];
 $deptNums = $_POST['deptnum'] ?? [];
+$prices   = $_POST['price']   ?? [];   // X rows priced on the final screen (series_price.js)
+$noPrice  = $_POST['noprice'] ?? [];   // X rows left without a price: out of the file, waiting for a price
+$waiting  = [];
+$pricedList = [];   // priced on the screen, for the summary to the shop owner
 
 // ── Load departments ──────────────────────────────────────────────────────────
 if (!file_exists($deptFile)) {
@@ -61,6 +66,19 @@ foreach ($rows as $row) {
     $deptNum  = trim($deptNums[$row] ?? '');
     $deptName = $numToName[$deptNum] ?? '';
 
+    if (($noPrice[$row] ?? '') === '1') {
+        $waiting[] = ['row' => $row, 'barcode' => $barcode, 'name' => $name, 'date' => $date, 'npDir' => $npDir,
+            'image' => trim((string) $sheet->getCell('K' . $row)->getValue())];
+        continue;
+    }
+    $seriesNote = false;   // priced by a series on the screen → column H says so
+    $typed = trim(str_replace(',', '.', (string) ($prices[$row] ?? '')));
+    if ($typed !== '' && is_numeric($typed) && (float) $typed > 0) {
+        $sheet->setCellValue('F' . $row, round((float) $typed, 2));
+        $pricedList[] = ['name' => $name, 'price' => (float) $typed, 'source' => (string) ($_POST['source'][$row] ?? '')];
+        $seriesNote = trim((string) ($_POST['source'][$row] ?? '')) !== '';
+    }
+
     // Final save only: copy the (possibly corrected) barcode into both A and C
     // so they end up identical in the finished NP file.
     $sheet->getStyle('A' . $row)->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
@@ -71,7 +89,7 @@ foreach ($rows as $row) {
     $sheet->setCellValue('G' . $row, $deptNum);
     // Department NAME is shown on screen for reference only — the final NP
     // file carries just the department number (G), so column H stays clear.
-    $sheet->setCellValue('H' . $row, null);
+    $sheet->setCellValue('H' . $row, $seriesNote ? NP_NOTE_SERIES : null);
 
     $maxP  = trim((string)$sheet->getCell('D' . $row)->getValue());
     $minP  = trim((string)$sheet->getCell('E' . $row)->getValue());
@@ -114,6 +132,19 @@ foreach (['A', 'B', 'C', 'G'] as $col) {
 // Note: the full department reference list is no longer written to the
 // spreadsheet (previously columns I/J) — it's shown in the app's side panel
 // instead, so the final NP file stays clean.
+
+// ── Products left without a price: out of the final file, onto the shop's waiting list ──
+foreach (array_reverse($waiting) as $w) $sheet->removeRow($w['row']);
+if ($waiting) npWriteDroppedFooter($sheet, $waiting);   // below the last row, column H
+$waitErr = null;
+if ($waiting) {
+    try {
+        require_once __DIR__ . '/../Series/store.php';
+        seriesWaitingAdd($shop, array_map(fn($w) => array_diff_key($w, ['row' => 1]), $waiting), strtoupper(substr($npDir, 0, 1)));
+    } catch (Throwable $e) {
+        $waitErr = $e->getMessage();
+    }
+}
 
 // ── Save as _DCL.xlsx (final) ─────────────────────────────────────────────────
 $base    = pathinfo($xlsxFile, PATHINFO_FILENAME);
@@ -244,6 +275,25 @@ function copyWarn() {
         setTimeout(function() { btn.textContent = orig; }, 2500);
     });
 }
+</script>
+<?php endif; ?>
+
+<?php require_once __DIR__ . '/series_summary.php'; npSeriesSummaryBox(npSeriesSummary($shop, $date, $pricedList, $waiting)); ?>
+<?php if ($waiting):
+    $noPriceText = implode("
+", array_map(fn($w) => "למוצר {$w['barcode']} {$w['name']} אין סדרה מתאימה ולכן לא נקבע לו מחיר", $waiting)); ?>
+<div class="warn-box">
+    <h4>⚠ <?= count($waiting) ?> מוצרים בלי מחיר — לא נכנסו לקובץ הסופי</h4>
+    <?php foreach (explode("
+", $noPriceText) as $line): ?><div class="warn-row"><?= htmlspecialchars($line) ?></div><?php endforeach; ?>
+    <div class="warn-row" style="color:#555"><?= $waitErr ? '✘ השמירה ברשימת "מחכים למחיר" נכשלה: ' . htmlspecialchars($waitErr) : 'נשמרו ברשימת <a href="../Series/waiting.php?shop=' . urlencode($shop) . '">מוצרים שמחכים למחיר</a> של ' . htmlspecialchars($shop) . '.' ?></div>
+    <button type="button" class="btn-copy" id="copyNoPrice">📋 העתק להודעת WhatsApp</button>
+</div>
+<script>
+document.getElementById('copyNoPrice').addEventListener('click', function () {
+    var btn = this;
+    navigator.clipboard.writeText(<?= json_encode($noPriceText, JSON_UNESCAPED_UNICODE) ?>).then(function () { btn.textContent = '✔ הועתק!'; setTimeout(function () { btn.textContent = '📋 העתק להודעת WhatsApp'; }, 2500); });
+});
 </script>
 <?php endif; ?>
 

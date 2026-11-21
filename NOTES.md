@@ -28,9 +28,89 @@ Splits a Comax items export (columns פריט / שם פריט / ברקוד / מ�
 - **Verified on YBC (the Gateway's 18/11 download):** split over HTTP (~12 s with CPD), 866 series / 425 conflicts, view 0.1 s; save of the Barilla 500 g card (14.90s → A, 17.90 fixed to 14.90 → price_fixes.json), a non-price refused with a message, export with decisions, restore; re-split kept the decision and wrote History. Left clean (no decisions).
 - Not built yet: the conflict screen (A–J / לא מסדרה / price fix), re-split diffs, the NP final-screen pricing.
 
+### WaFetch on a slow connection: retry "reading 'Socket'" (November 19)
+
+User's run on a weak line (BernardYahud, 19/11 15:26): 4 images saved, 6 "image download failed", 1 without a price. The next three starts failed within ~6 s with `Cannot read properties of null (reading 'Socket')` in whatsapp-web.js `Client.inject` — the page answered but WhatsApp's modules (`WAWebSocketModel`) hadn't loaded yet. `index.js`: that error (also `Store` / `default`) is now a transient start error; 4 attempts, waiting 10 / 20 / 30 s between them. `web-run.js`: when the start still fails, the page says WhatsApp didn't come up after several attempts — probably a slow or broken connection. Not reproduced live.
+
+### WaFetch: WhatsApp logged out → "חבר את WhatsApp מחדש" (November 21)
+
+The real cause of the 19–21/11 failures ('Socket', 'Page.navigate timed out'): the fetcher's
+session was logged out, and WhatsApp Web now sends a logged-out browser to
+`web.whatsapp.com/login/`, which whatsapp-web.js (1.34.7; 1.34.8 too, tried and reverted) doesn't
+know — it fails and never emits a QR. Fixed by linking by hand: `relink.js` opens a visible
+Chrome with the session profile; scan the QR; it closes itself once the chats load (10 min max).
+- `index.js`: when `initialize()` fails on a `/login` page → an error with `userMessage` /
+  `loggedOut` (no retries): "WhatsApp מנותק — צריך לסרוק QR מחדש…"; `web-run.js` passes `loggedOut`.
+- WaFetch: a "חבר את WhatsApp מחדש (QR)" button on that error, and a permanent link under the
+  download button → `api.php?action=relink` (refused while a download runs) → `relink.js`
+  (log: `output/web/relink.log`). The refusal was seen working; the button's window and the
+  logged-out message were not run end to end (the session was linked by then).
+- After relinking, the first run (YBC, 21/11) got only the last day: the phone did not answer the
+  older-history request within 30 s (a newly linked device — the phone is still sending its
+  initial history). `loadMessagesBack` now asks the phone up to 3 times (`PHONE_REQUESTS`, 30 s
+  each) before stopping. The next run still got only the last day — the phone answered none of
+  the 3 requests (the request was sent without error).
+- Manual way round it: `node relink.js --open` / WaFetch link "פתח את ה-WhatsApp של ההורדות"
+  (`relink` action with `open=1`): the fetcher's WhatsApp Web in a visible window, left open until
+  the user closes it — open the group, scroll up, "get older messages from your phone" until the
+  start of the window, close, run again (the messages are then in the session's local store).
+  Opened through the action on 21/11; whether the next run then reads the older messages is untested.
+
 ### Comax Gateway (RetailAgents/Playwright/PlaywrightDemo): the dashboard lists the last 10 runs
 
 `MAX_JOBS_LISTED` in `gateway/server.js` 50 → 10 — only the list; older runs stay in `runs\` (log and files). A running or queued job is always among the newest, so the dashboard's activity refresh is unaffected. Takes effect when the Gateway is restarted (`start_gateway.bat`).
+
+### Series module, step 3: "תן מחיר לפי סדרה" on NP's final screen (November 21)
+
+The user reached YBC's final screen expecting it (21/11) — it wasn't built yet; the X rows showed
+0.00 there (the file itself kept "X"). Built:
+- `stage_dcl.php`: a row whose price (F) isn't a number is status `x` ("X — מחיר לפי סדרה", not
+  FTP, not "below the minimum"); its price cell is a checkbox + price field (`price[row]`) +
+  hidden `noprice[row]`. A box above the table: "N מוצרים במחיר X" · כולם · "תן מחיר לפי סדרה".
+- `series_price.js` (shared): asks `series_price_api.php` (→ `Series/store.php`
+  `seriesPriceOptions()` → `seriesCandidates()`) and opens under each row its options — series /
+  single items with price, size, conflict prices, examples — "עדכן מחיר לפי סדרה" puts the price
+  in the row; or type a price; or "ללא מחיר — יחכה למחיר". Saving with X rows still open asks,
+  then marks them "ללא מחיר".
+- `stage_dcl_save.php`: a typed / chosen price goes to F; "ללא מחיר" rows are removed from the
+  final file, added to `{shop}\ProductsList\Series\waiting_price.json` (`seriesWaitingAdd`), and
+  listed with "📋 העתק להודעת WhatsApp": "למוצר <ברקוד> <שם> אין סדרה מתאימה ולכן לא נקבע לו מחיר".
+- `Series/waiting.php?shop=` — the waiting list (remove when priced); linked from NP's start
+  screen (per shop, with the count) and from the series screen.
+- `NPharmonized/series_fix.php?shop=&date=[&root=]` — the same pricing for an NP file already
+  saved (`_DCL.xlsx` with X rows), then saves it again. For YBC 21/11 (7 X rows).
+- The product name is editable on both screens (series_fix.php writes it to B); changing it (e.g.
+  adding the weight read on the photo) searches that row again — "דוריטוס שום עם טוויסט" + "55 גרם"
+  moved the 55 g Doritos series (6.90) from 3rd to first (checked headless).
+- **Renaming a price-list item** (`Series/rename.php?shop=&q=<barcode / name>`, linked as "שנה שם / צרף
+  לסדרה" from every single-item option and from the series screen): an item the chain named a
+  little differently ("דוריטוס חמוץ חריף 55 ג׳") gets the shop's name; the decision `rename` (per
+  barcode) makes `seriesSplit($shop, $drive, true)` rebuild the split from the same download
+  with the new name (~6 s; no History, the previous changes kept), so the item joins its series.
+  `Series
+ame_fixes.json` for the Gateway: `{"shop","updated","fixes":[{"barcode","code",
+  "oldName","newName","created"}]}`; a rename is dropped once a download shows Comax has the name.
+  A series card save keeps a rename. Tested on YBC (into series 478, 7 items; NP option 1 became
+  that series) and cancelled.
+- **Message to the shop owner** (`NPharmonized/series_summary.php`): after saving (final screen and
+  series_fix.php) a box "הודעה לבעל החנות" + "📋 העתק להודעת WhatsApp": each product priced on
+  the screen — price — "כמו <the series product most like it, not itself> (סדרה של N מוצרים)" or
+  "מחיר שנקבע ידנית"; then the products left without a price. The chosen option is kept per row
+  in `source[row]` (series_price.js; typing a price clears it; options carry `like`). Checked
+  headless (source set / cleared) and the text by a unit call; not yet after a real save.
+- **Notes in the final file, column H** (the Comax import reads A–G only — ArrChoose in the Gateway):
+  a row priced by a series option (source set) gets "שונה על פי מחיר סדרה"; below the last product,
+  "מוצרים שירדו בגלל חוסר מחיר : <name> <barcode>" then one dropped product per row (`npWriteDroppedFooter`,
+  `series_summary.php`; a later save keeps the earlier list). Both save screens. Tested on a copy of
+  the YBC 21/11 file. That file itself was saved before this (no notes); its 3 dropped products are in
+  the waiting list. Open question: whether Comax's import shows the footer rows (A–G empty) as rows.
+- `seriesCandidates()` fallback: when nothing has the same brand + first word, series / single
+  items whose names contain the product's first word with a fitting size, marked `loose` ("התאמה
+  חלשה"). Needed because NP names carry CPD's brand (דוריטוס) while YBC's list says "-עלית" and
+  "חטיף דוריטוס". YBC 21/11: 5 of 7 X products got options (2 have nothing alike in the list).
+- Verified: the API (0.4 s), the final screen on a copy of the 21/11 stage-2 file (7 X rows, the
+  box, no PHP errors), series_fix.php clicked through headless (options shown, a price set,
+  "ללא מחיר" set) — not saved; the save paths (final file, waiting list) not run yet.
 
 ### CPD: three more chains (fewer products CPD misses)
 
@@ -4112,6 +4192,22 @@ side: one document of several pages, or separate documents (suggested by the doc
 read on each page). Pages of one document are merged (`InvoiceReader::merge`: rows of all pages,
 header from the first page that has it, totals from the last). `batch.php` lists the documents,
 each approved on its own in confirm.php. A PDF is always a whole document.
+
+**A day's photos in one batch (Nov 20):** a document of several pages is only joined when all
+its pages are in the same batch, so a day's photos are read together (choosing a few is for tests).
+`scan_batch_groups()` now links pages over the whole batch: the same issuer + date (as before),
+the same document number (also when one page has no issuer / date), and a page without a header
+(`continuation`, or a printed page number above 1) with the page before it in the batch order.
+The AI now also returns `page.number` / `page.of` as printed and `continuation` (normalized to
+`page_number`, `page_of`, `continuation`); pages of one document are put in their printed page
+order when every page has one. `group.php`: such a page is marked "דף המשך (בלי כותרת)" and suggested
+with the page before it; the group's header comes from a page that has supplier + date.
+Limit: "the page before" is the file-name order — right for WhatsApp names (time), meaningless for
+`IMG_<hash>.jpg` (no EXIF time either); the user corrects it on the screen. Tested on the earlier
+reads plus a made-up header-less page (joined to the KA chocolate invoice, 3 pages); not yet on a
+real run. Restart: the 24 photos read before (12 WhatsApp 16/11 + 12 IMG) were copied back to
+preProcessDir from TempPP / Aside_16-11-26 (originals kept); `KAchocolate 27-04-26 A.pdf` (approved 16/11, mid-flow) moved to Aside_16-11-26; two unfinished old readings moved to
+`work/old_2026-11-20/`.
 
 **Not built yet:** skipping the approval screen when the identification is sure ("option B"),
 the commercial layer on CPD, new product / new price filled from CPD, a way back to the

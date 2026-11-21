@@ -47,6 +47,7 @@ seriesPageHead('סדרות מוצרים');
             <a class="btn" href="view.php?shop=<?= urlencode($shop) ?>">פתח</a>
             <a class="btn light" href="export.php?shop=<?= urlencode($shop) ?>">ייצוא לאקסל</a>
             <?php endif; ?>
+            <?php $w = count(seriesWaitingLoad($shop)); if ($w): ?><a class="btn light" href="waiting.php?shop=<?= urlencode($shop) ?>">מחכים למחיר (<?= $w ?>)</a><?php endif; ?>
         </td>
     </tr>
     <?php endforeach; ?>

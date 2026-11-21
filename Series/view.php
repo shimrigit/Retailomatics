@@ -20,6 +20,7 @@ foreach ($data['result']['series'] as $s) {
     $s['parts'] = $p;
     $s['open'] = (bool) array_filter($p, fn($x) => $x['conflict']);
     $s['touched'] = (bool) array_filter($s['items'], fn($it) => isset($dec[$it['barcode']]));
+    $s['renames'] = count(array_filter($s['items'], fn($it) => isset($dec[$it['barcode']]['rename'])));
     $bases[] = $s;
 }
 $lists = [
@@ -57,7 +58,7 @@ seriesPageHead("סדרות – $shop");
 <h2>סדרות – <?= h($shop) ?></h2>
 <p class="sub">
     חולק <?= h(date('d/m/Y H:i', strtotime($data['meta']['built']))) ?> · לפי <?= h($data['meta']['source']) ?> ·
-    <a href="index.php">כל הלקוחות</a> · <a href="export.php?shop=<?= urlencode($shop) ?>">ייצוא לאקסל</a>
+    <a href="index.php">כל הלקוחות</a> · <a href="export.php?shop=<?= urlencode($shop) ?>">ייצוא לאקסל</a> · <a href="rename.php?shop=<?= urlencode($shop) ?>">שינוי שם פריט</a>
 </p>
 <?php if (!empty($_GET['error'])): ?><div class="err">⚠ <?= h($_GET['error']) ?></div><?php endif; ?>
 <div class="box stats">
@@ -101,6 +102,7 @@ seriesPageHead("סדרות – $shop");
     <input type="hidden" name="show" value="<?= h($show) ?>">
     <div class="card-head">
         <span class="title">#<?= $s['id'] ?> · <?= h($s['brand'] ?: 'ללא יצרן') ?> · <?= h($s['line']) ?> · <?= h($s['sizeText']) ?></span>
+        <?php if ($s['renames']): ?><span class="part" style="background:#fff3b0;color:#7a5800" title="נשאר ב'נפתרו / נערכו' עד שקומקס יראה את השם החדש (הורדה חדשה + עדכן חלוקה)"><?= $s['renames'] ?> שינוי שם ממתין לקומקס</span><?php endif; ?>
         <?php foreach ($s['parts'] as $p): ?>
         <span class="part <?= $p['conflict'] ? 'bad' : '' ?>">
             <?= $p['letter'] === '' ? 'הסדרה' : 'תת-סדרה ' . h($p['letter']) ?>:
@@ -121,7 +123,7 @@ seriesPageHead("סדרות – $shop");
         ?>
         <tr class="<?= isset($d['fixPrice']) ? 'fixed' : '' ?> <?= $a === 'none' ? 'out' : '' ?>">
             <td><?= h($bc) ?></td>
-            <td><?= h($it['name']) ?></td>
+            <td><?= h($it['name']) ?><?php if (!empty($it['comaxName'])): ?><div class="muted" style="font-size:14px">בקומקס עדיין: <?= h($it['comaxName']) ?> — <a href="rename.php?shop=<?= urlencode($shop) ?>&q=<?= urlencode($bc) ?>">שינוי שם</a></div><?php endif; ?></td>
             <td class="<?= $diff ? 'diff' : '' ?>"><?= money($it['price']) ?></td>
             <td>
                 <select name="assign[<?= h($bc) ?>]">

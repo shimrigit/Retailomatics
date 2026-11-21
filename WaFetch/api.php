@@ -106,6 +106,14 @@ switch ($action) {
              'shop' => waf_shop_key($runShop), 'imagesDir' => str_replace('/', '\\', waf_images_dir($runShop))],
             ['mode' => 'fetch', 'key' => $key, 'end' => $end, 'shop' => waf_shop_key($runShop)])]);
 
+    case 'relink':
+        // Opens relink.js (a visible Chrome with the QR) — refused while a download is using WhatsApp.
+        if ($active = waf_active_jobs()) {
+            out(['error' => 'הורדה פעילה עכשיו — המתן שתסתיים'], 409);
+        }
+        waf_start_relink(!empty($_POST['open']));
+        out(['ok' => true]);
+
     case 'open_folder':
         waf_open_images_folder((string) ($_POST['shop'] ?? ''));
         out(['ok' => true]);

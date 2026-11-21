@@ -100,6 +100,14 @@ function waf_start_job(array $job, array $meta = []): string
     return $id;
 }
 
+/** Starts relink.js (a visible Chrome with WhatsApp Web's QR) in the background; its output goes to output/web/relink.log. */
+function waf_start_relink(bool $stayOpen = false): void
+{
+    $win = fn(string $p) => str_replace('/', '\\', $p);
+    $cmd = 'start "" /B /D "' . $win(WAF_FETCHER_DIR) . '" "' . $win(WAF_NODE_EXE) . '" relink.js' . ($stayOpen ? ' --open' : '') . ' > "' . $win(WAF_WEB_DIR . '/relink.log') . '" 2>&1';
+    pclose(popen($cmd, 'r'));
+}
+
 function waf_job_dir(string $id): ?string
 {
     return preg_match('/^\d{6}-\d{6}-[0-9a-f]{4}$/', $id) && is_dir(WAF_JOBS_DIR . "/$id") ? WAF_JOBS_DIR . "/$id" : null;

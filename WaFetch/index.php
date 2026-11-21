@@ -180,6 +180,9 @@ $boot = [
     <p class="hint">הודעות בטווח שמזכירות אחד השמות (גם "לשמרי", "@שמרי") יוצגו בסוף בנפרד.</p>
 
     <button class="big" id="runBtn">⬇ הורד תמונות</button>
+    <p class="hint" style="margin-top:8px">WhatsApp מנותק (ההורדה נכשלת כבר בהתחברות)? <a href="#" class="relinkWa">חבר את WhatsApp מחדש</a> — נפתח חלון עם QR לסריקה מהטלפון.<br>
+        חסרות הודעות מתחילת הטווח ("לא ניתן היה לטעון הודעות לפני…")? <a href="#" class="relinkWa" data-open="1">פתח את ה-WhatsApp של ההורדות</a> — בחלון: פתח את הקבוצה, גלול למעלה ולחץ "לקבלת הודעות ישנות יותר מהטלפון" עד תחילת הטווח, סגור את החלון והרץ שוב.</p>
+    <div id="relinkMsg" class="hint"></div>
 
     <div id="status">
         <div class="state" id="stateBox"><div class="spinner" id="spinner"></div><div id="stateText" style="white-space:pre-line"></div></div>
@@ -323,7 +326,7 @@ function follow(job, mode) {
         const finished = st.state === 'done' || st.state === 'error';
         $('stateBox').className = 'state' + (st.state === 'done' ? ' done' : st.state === 'error' ? ' error' : st.state === 'queued' ? ' queued' : '');
         $('spinner').style.display = finished ? 'none' : '';
-        $('stateText').innerHTML = esc(st.message || '…') + (st.error ? `<br><span style="font-size:14px;direction:ltr;display:block;text-align:left;white-space:pre-wrap">${esc(st.error)}</span>` : '');
+        $('stateText').innerHTML = esc(st.message || '…') + (st.loggedOut ? '<br><button type="button" class="relinkWa" style="margin-top:10px;padding:8px 18px;font-size:16px">חבר את WhatsApp מחדש (QR)</button>' : '') + (st.error ? `<br><span style="font-size:14px;direction:ltr;display:block;text-align:left;white-space:pre-wrap">${esc(st.error)}</span>` : '');
         $('qr').innerHTML = st.state === 'qr' && st.qr ? `<pre class="qr">${esc(st.qr)}</pre>` : '';
         const imgs = st.images;
         $('bar').style.display = st.state === 'downloading' && imgs && imgs.total ? '' : 'none';
@@ -405,6 +408,24 @@ document.querySelectorAll('.clearInbox').forEach(b => b.onclick = async () => {
 $('names').value = (boot.names || []).join(', ');
 renderGroups();
 if (boot.running) follow(boot.running, 'fetch');
+// "חבר את WhatsApp מחדש": opens a Chrome window with the QR (relink.js); scan from the phone,
+// the window closes by itself once the chats load — then run the download again.
+document.addEventListener('click', async e => {
+    const a = e.target.closest('.relinkWa');
+    if (!a) return;
+    e.preventDefault();
+    const msg = document.getElementById('relinkMsg');
+    try {
+        const r = await (await fetch('api.php', { method: 'POST', body: new URLSearchParams({ action: 'relink', open: a.dataset.open ? '1' : '' }) })).json();
+        if (r.error) throw new Error(r.error);
+        msg.style.color = '#1b7a3a';
+        msg.textContent = a.dataset.open ? 'נפתח חלון Chrome עם ה-WhatsApp של ההורדות — פתח את הקבוצה, גלול למעלה עד תחילת הטווח (לחץ על "לקבלת הודעות ישנות יותר מהטלפון" כשמופיע), סגור את החלון והרץ שוב.' : 'נפתח חלון Chrome עם QR — סרוק מהטלפון (WhatsApp ← מכשירים מקושרים ← קישור מכשיר). החלון ייסגר לבד כשהצ\'אטים ייטענו, ואז הרץ שוב.';
+    } catch (err) {
+        msg.style.color = '#b3261e';
+        msg.textContent = 'לא הצלחתי לפתוח את החלון: ' + err.message;
+    }
+    msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 </script>
 </body>
 </html>

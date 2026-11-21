@@ -137,7 +137,10 @@ foreach (['A', 'B', 'C', 'G'] as $col) {
 foreach (array_reverse($waiting) as $w) $sheet->removeRow($w['row']);
 if ($waiting) npWriteDroppedFooter($sheet, $waiting);   // below the last row, column H
 $waitErr = null;
-if ($waiting) {
+$isDemo = str_contains($npDir, "/RetailomaticsDemo/");   // a demo does not touch the shop's real waiting list
+if ($waiting && $isDemo) {
+    $waitErr = "הדגמה — לא נשמר ברשימה של החנות";
+} elseif ($waiting) {
     try {
         require_once __DIR__ . '/../Series/store.php';
         seriesWaitingAdd($shop, array_map(fn($w) => array_diff_key($w, ['row' => 1]), $waiting), strtoupper(substr($npDir, 0, 1)));

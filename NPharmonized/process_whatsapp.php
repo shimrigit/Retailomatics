@@ -29,7 +29,7 @@ $rootLetter = $_POST['root_letter'] ?? '';
 $mode       = npFlowMode();
 
 $waSource          = npWaSource();
-$whatsappImagesDir = npWaImagesDir($waSource, $shop);
+$whatsappImagesDir = npWaImagesDir($waSource, npWaShop($shop));
 
 // ── Ensure the NP directory exists (defensive re-check) ────────────────────────
 if (!is_dir($npDir) && !@mkdir($npDir, 0777, true)) {
@@ -121,7 +121,7 @@ unset($item);
 // archive them without warning (WaFetch/config.php).
 if ($waSource === 'group') {
     $inNp = array_map(fn($i) => $i['fname'], array_filter($items, fn($i) => strpos($i['fullPath'], $npDir) === 0));
-    waf_mark_consumed(array_values($inNp), "NP {$shop} {$date}", $shop);
+    waf_mark_consumed(array_values($inNp), "NP {$shop} {$date}", npWaShop($shop));
 }
 
 // ── Generate the NPL workbook with the required headers ─────────────────────────

@@ -29,11 +29,13 @@ $dateFolder  = "{$dd}-{$mm}-{$yy} NP";   // 23-06-26 NP
 $monthFolder = "{$mm}_{$mmm}";            // 06_June
 
 // ── Build paths (forward slashes — PHP on Windows handles both) ───────────────
-$npDir    = "{$rootLetter}:/RetailomaticsCloud/RetailomaticsArchive/{$shop}/NewProducts/{$yyyy}/{$monthFolder}/{$dateFolder}";
+// A demo ("הדגמה"): the same structure under RetailomaticsDemo instead of RetailomaticsArchive.
+$archive  = npIsDemo() ? 'RetailomaticsDemo' : 'RetailomaticsArchive';
+$npDir    = "{$rootLetter}:/RetailomaticsCloud/{$archive}/{$shop}/NewProducts/{$yyyy}/{$monthFolder}/{$dateFolder}";
 $deptFile = __DIR__ . "/../configDir/{$shop}_Departments.json";
 
 // Display versions (Windows backslash style)
-$npDirDisplay    = "{$rootLetter}:\\RetailomaticsCloud\\RetailomaticsArchive\\{$shop}\\NewProducts\\{$yyyy}\\{$monthFolder}\\{$dateFolder}";
+$npDirDisplay    = "{$rootLetter}:\\RetailomaticsCloud\\{$archive}\\{$shop}\\NewProducts\\{$yyyy}\\{$monthFolder}\\{$dateFolder}";
 $deptFileDisplay = "C:\\xampp\\htdocs\\website\\configDir\\{$shop}_Departments.json";
 
 $deptExists = file_exists($deptFile);
@@ -55,7 +57,7 @@ if ($harvestMode === 'whatsapp') {
     $npDirExists = is_dir($npDir);
 
     // ── Validate the images staged by the chosen WhatsApp source ──────────────
-    $whatsappImagesDir = npWaImagesDir($waSource, $shop);
+    $whatsappImagesDir = npWaImagesDir($waSource, npWaShop($shop));
     $waPattern = '/^\d{6}-\d{6} (\d+) (.+)\.jpe?g$/i';
     $waFiles   = glob($whatsappImagesDir . '/*.{jpg,jpeg,JPG,JPEG}', GLOB_BRACE) ?: [];
 
@@ -331,6 +333,7 @@ if ($harvestMode === 'whatsapp') {
         <input type="hidden" name="dept_file"    value="<?= htmlspecialchars($deptFile) ?>">
         <input type="hidden" name="harvest_mode" value="whatsapp">
         <input type="hidden" name="wa_source"    value="<?= htmlspecialchars($waSource) ?>">
+        <input type="hidden" name="demo"         value="<?= npIsDemo() ? '1' : '' ?>">
         <input type="hidden" name="mode"         value="<?= htmlspecialchars($mode) ?>">
         <button class="btn-approve" <?= $allOk ? '' : 'disabled' ?>>אישור</button>
     </form>

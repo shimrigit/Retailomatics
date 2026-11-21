@@ -48,7 +48,8 @@ Chrome with the session profile; scan the QR; it closes itself once the chats lo
 - After relinking, the first run (YBC, 21/11) got only the last day: the phone did not answer the
   older-history request within 30 s (a newly linked device — the phone is still sending its
   initial history). `loadMessagesBack` now asks the phone up to 3 times (`PHONE_REQUESTS`, 30 s
-  each) before stopping. The next run still got only the last day — the phone answered none of
+  each) before stopping. (Also retried now: "Runtime.callFunctionOn timed out" / "Page.navigate timed out" — a
+  start that hung ~3 min on 21/11 11:45, demo group; WhatsApp itself was fine right after.) The next run still got only the last day — the phone answered none of
   the 3 requests (the request was sent without error).
 - Manual way round it: `node relink.js --open` / WaFetch link "פתח את ה-WhatsApp של ההורדות"
   (`relink` action with `open=1`): the fetcher's WhatsApp Web in a visible window, left open until
@@ -59,6 +60,29 @@ Chrome with the session profile; scan the QR; it closes itself once the chats lo
 ### Comax Gateway (RetailAgents/Playwright/PlaywrightDemo): the dashboard lists the last 10 runs
 
 `MAX_JOBS_LISTED` in `gateway/server.js` 50 → 10 — only the list; older runs stay in `runs\` (log and files). A running or queued job is always among the newest, so the dashboard's activity refresh is unaffected. Takes effect when the Gateway is restarted (`start_gateway.bat`).
+
+### Demo mode: WhatsApp download → NP → Comax Gateway in a separate folder (November 21)
+
+For showing the system to prospective customers on a demo WhatsApp group without touching a
+shop's real folders. One folder for everything: `Z:\RetailomaticsCloud\RetailomaticsDemo\`, the
+same structure as `RetailomaticsArchive`.
+- NP start screen: checkbox "הדגמה" (per run, `demo=1`), carried index → WaFetch → confirm →
+  process_whatsapp (`wa_source.php`: `npIsDemo()`, `npWaShop()`).
+- WaFetch: a demo is the WaFetch shop "<shop> - הדגמה" (`waf_demo_shop`, `WAF_DEMO_SUFFIX`) — its
+  images folder `RetailomaticsDemo\<shop>\WhatsAppImages` (`waf_images_dir`), its own "taken by NP"
+  record, queue slot and archive (`web-run.js` now names the archive folder by shop). The NP bar
+  shows "הדגמה — תיקייה נפרדת". A demo run never moves a group's "last run" (`lastEnd`) and never
+  links a group to a shop (`api.php`) — so a demo on a real group doesn't change the next real run.
+- confirm.php: `np_dir` under RetailomaticsDemo; the later stages follow np_dir.
+  stage_dcl_save.php: a demo doesn't add to the shop's real waiting-for-price list.
+- Gateway (RetailAgents/Playwright/PlaywrightDemo): checkbox "הדגמה" next to the date in the import
+  section (kept in localStorage) → `/api/dcl?demo=1` and `uploadNewProducts` param `demo` →
+  `npFiles` `shopDir/npDirForDate/listDcl/findDclForDate(..., demo)`. The real shop's Comax tab is
+  used; the user doesn't click the green V. Other actions (giyul, products export) unchanged.
+- Verified: paths, NP start (checkbox), WaFetch in NP mode (demo shop, badge, demo carried),
+  confirm.php (NP folder created under RetailomaticsDemo, images read from the demo folder); the
+  Gateway's paths by a node call and its page script parses — the Gateway must be restarted to load
+  the server change. A full demo run not done yet.
 
 ### Series module, step 3: "תן מחיר לפי סדרה" on NP's final screen (November 21)
 

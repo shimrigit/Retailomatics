@@ -65,6 +65,11 @@ $today = date('Y-m-d');
             <div class="opt-note" id="waitNote" style="margin-right:0"></div>
         </div>
 
+        <label class="chk" style="display:flex;align-items:center;gap:10px;font-size:20px;margin:-14px 0 26px;cursor:pointer;background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:10px 14px">
+            <input type="checkbox" name="demo" value="1" style="width:22px;height:22px">
+            <span>הדגמה <span style="font-weight:normal;font-size:15px;color:#7a5800">— תמונות וקבצים בתיקייה נפרדת (Z:\RetailomaticsCloud\RetailomaticsDemo), בלי לגעת בתיקיות האמיתיות של החנות</span></span>
+        </label>
+
         <label for="root_letter">אות כונן ראשי</label>
         <input type="text" class="letter" id="root_letter" name="root_letter" value="Z" maxlength="1" required>
 

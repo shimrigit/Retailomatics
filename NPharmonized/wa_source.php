@@ -20,6 +20,18 @@ function npWaImagesDir(string $source, string $shop): string
     return $source === 'group' ? waf_images_dir($shop) : __DIR__ . '/../whatsapp_app/whatsapp_images';
 }
 
+/** A demo run (NP's "הדגמה", POST demo=1, carried index → WaFetch → confirm → process_whatsapp). */
+function npIsDemo(): bool
+{
+    return !empty($_POST['demo']);
+}
+
+/** The WaFetch shop whose images NP takes: the shop, or its demo ("<shop> - הדגמה"). */
+function npWaShop(string $shop): string
+{
+    return npIsDemo() ? waf_demo_shop($shop) : $shop;
+}
+
 function npWaSourceLabel(string $source): string
 {
     return $source === 'group' ? 'WhatsApp — הורדה מקבוצה' : 'WhatsApp Business (webhook)';

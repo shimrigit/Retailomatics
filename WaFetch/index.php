@@ -10,20 +10,22 @@
 require_once __DIR__ . '/lib.php';
 $settings = waf_settings();
 $np = ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['np_flow']))
-    ? array_map('strval', array_intersect_key($_POST, array_flip(['date', 'shop', 'root_letter', 'mode', 'harvest_mode', 'wa_source'])))
+    ? array_map('strval', array_intersect_key($_POST, array_flip(['date', 'shop', 'root_letter', 'mode', 'harvest_mode', 'wa_source', 'demo'])))
     : null;
+// A demo (NP's "הדגמה"): WaFetch works on the shop's demo — its own folder (waf_images_dir).
+$npShop = $np ? (!empty($np['demo']) ? waf_demo_shop($np['shop'] ?? '') : ($np['shop'] ?? '')) : '';
 $active = waf_active_jobs();
 // The run this page follows: from NP, that shop's; otherwise the oldest one.
-$running = $np ? waf_active_job_for($np['shop'] ?? '') : ($active ? [array_key_first($active)] : null);
+$running = $np ? waf_active_job_for($npShop) : ($active ? [array_key_first($active)] : null);
 // The folders with images: from NP, that shop's only.
-$inboxShops = $np ? (waf_inbox_files($np['shop'] ?? '') ? [waf_shop_key($np['shop'] ?? '')] : []) : waf_inbox_shops();
+$inboxShops = $np ? (waf_inbox_files($npShop) ? [waf_shop_key($npShop)] : []) : waf_inbox_shops();
 $stateHe = ['queued' => 'ממתינה בתור ל-WhatsApp', 'starting' => 'מתחילה', 'connecting' => 'מתחברת', 'qr' => 'ממתינה לסריקת QR',
     'loading' => 'טוענת הודעות', 'downloading' => 'מורידה תמונות'];
 $boot = [
     'groups'  => $settings['groups'],
     'names'   => $settings['names'],
     'running' => $running[0] ?? null,
-    'shop'    => $np['shop'] ?? null,
+    'shop'    => $np ? $npShop : null,
 ];
 ?>
 <!DOCTYPE html>
@@ -93,7 +95,7 @@ $boot = [
         </form>
         <div class="panel" style="margin:-8px 0 8px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
             <div style="flex:1;font-size:18px">
-                <b>NP Harmonized</b> · <?= htmlspecialchars($np['shop'] ?? '') ?> · <?= htmlspecialchars(date('d/m/Y', strtotime($np['date'] ?? 'today'))) ?>
+                <b>NP Harmonized</b> · <?= htmlspecialchars($npShop) ?><?= !empty($np['demo']) ? ' <span style="background:#fff3b0;color:#7a5800;padding:1px 8px;border-radius:8px">הדגמה — תיקייה נפרדת</span>' : '' ?> · <?= htmlspecialchars(date('d/m/Y', strtotime($np['date'] ?? 'today'))) ?>
                 <br><span class="muted">שלב 1: הורדת התמונות מהקבוצה. בסיום — "המשך ל-NP".</span>
             </div>
         </div>

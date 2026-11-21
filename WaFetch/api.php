@@ -35,7 +35,8 @@ if ($action === 'status') {
     }
     $meta = waf_read_json("$dir/meta.json") ?? [];
     if (($st['state'] ?? '') === 'done' && ($meta['mode'] ?? '') === 'fetch' && empty($meta['applied'])) {
-        if (isset($settings['groups'][$meta['key']])) {
+        // A demo run never moves a group's "last run" — the next real run still starts where it should.
+        if (isset($settings['groups'][$meta['key']]) && !waf_is_demo((string) ($meta['shop'] ?? ''))) {
             $settings['groups'][$meta['key']]['lastEnd'] = (int) $meta['end'];
             waf_save_settings($settings);
         }
@@ -97,7 +98,7 @@ switch ($action) {
         $names = array_values(array_filter(array_map('trim', preg_split('/[,،\n]+/u', (string) ($_POST['names'] ?? '')))));
         $settings['names'] = $names;
         // From NP: the group belongs to this shop (set once — a group serves one shop).
-        if ($shop !== '' && empty($settings['groups'][$key]['shop'])) {
+        if ($shop !== '' && !waf_is_demo($shop) && empty($settings['groups'][$key]['shop'])) {   // a demo links no group
             $settings['groups'][$key]['shop'] = $shop;
         }
         waf_save_settings($settings);

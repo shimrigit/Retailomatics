@@ -28,8 +28,28 @@ function waf_shop_key(string $shop): string
     return $k !== '' ? $k : WAF_NO_SHOP;
 }
 
+// Demo runs (NP's "הדגמה"): the shop's demo is a WaFetch shop of its own, "<shop> - הדגמה" — its own
+// images folder inside the demo folder (Z:\RetailomaticsCloud\RetailomaticsDemo\<shop>\WhatsAppImages),
+// its own "taken by NP" record and archive — so a demo never touches the shop's real images.
+// NP's files of a demo go under RetailomaticsDemo too (confirm.php), with the archive's structure.
+define('WAF_DEMO_SUFFIX', ' - הדגמה');
+define('WAF_DEMO_ROOT', 'Z:/RetailomaticsCloud/RetailomaticsDemo');
+
+function waf_demo_shop(string $shop): string
+{
+    return waf_shop_key($shop) . WAF_DEMO_SUFFIX;
+}
+
+function waf_is_demo(string $shop): bool
+{
+    return str_ends_with(waf_shop_key($shop), WAF_DEMO_SUFFIX);
+}
+
 function waf_images_dir(string $shop): string
 {
+    if (waf_is_demo($shop)) {
+        return WAF_DEMO_ROOT . '/' . substr(waf_shop_key($shop), 0, -strlen(WAF_DEMO_SUFFIX)) . '/WhatsAppImages';
+    }
     return WAF_IMAGES_ROOT . '/' . waf_shop_key($shop);
 }
 

@@ -187,6 +187,10 @@ class InvoiceReader
             'rows_printed' => $num($d['rows_printed'] ?? null),
             'unreadable' => array_values(array_filter(array_map($str, (array) ($d['unreadable'] ?? [])))),
             'notes' => $str($d['notes'] ?? ''),
+            // the page as printed ("עמוד 2 מתוך 3"), and a page without the letterhead / document header (the rest of a table)
+            'page_number' => is_numeric($d['page']['number'] ?? null) ? (int) $d['page']['number'] : null,
+            'page_of' => is_numeric($d['page']['of'] ?? null) ? (int) $d['page']['of'] : null,
+            'continuation' => !empty($d['continuation']),
         ];
     }
 
@@ -217,7 +221,9 @@ Return exactly this shape:
   "items": [ { "barcode": "<see rules>", "description": "<as printed>", "qty": <number or null>, "unit_price": <number or null>, "discount1_pct": <number or null>, "discount2_pct": <number or null>, "line_total": <number or null> } ],
   "totals": { "before_discount": <number or null>, "discount": <number or null>, "before_vat": <number or null>, "vat": <number or null>, "total": <number or null> },
   "unreadable": [ "<what you could not read with confidence, and where>" ],
-  "notes": "<anything a checker should know: handwriting, a cut-off page, two quantity columns, prices with or without VAT, etc.>"
+  "notes": "<anything a checker should know: handwriting, a cut-off page, two quantity columns, prices with or without VAT, etc.>",
+  "page": { "number": <the page number as printed (עמוד / דף 2 מתוך 3, 2/3), or null>, "of": <the number of pages as printed, or null> },
+  "continuation": <true when this page continues a document begun on another page: no letterhead / document title / number at the top, the table goes on, or the totals are only here; else false>
 }
 
 Rules:

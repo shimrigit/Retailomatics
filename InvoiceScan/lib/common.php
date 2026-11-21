@@ -196,19 +196,47 @@ function scan_issuer(array $data): string
 }
 
 /**
- * The pages that may belong together: photos (a PDF is always a whole document) of the same
- * issuer and date, two or more. [[file, ...], ...]
+ * The pages that may belong together — over the whole batch, so a day's photos should be read
+ * in one batch: a document of several pages is only joined when all its pages are in it.
+ * Photos only (a PDF is always a whole document). Pages are linked when:
+ *  - the same issuer and date were read on them;
+ *  - the same document number was read on them (also when one has no issuer / date);
+ *  - a page without a header (the rest of a table: "continuation", or a page number above 1)
+ *    follows a page in the batch order (the photos' order) — it is suggested with that page.
+ * Groups of two or more pages: [[file, ...], ...], each in the batch order.
  */
 function scan_batch_groups(array $batch): array
 {
-    $groups = [];
+    $files = [];
     foreach ($batch['pages'] as $file => $read) {
         if (isset($read['error']) || strtolower(pathinfo($file, PATHINFO_EXTENSION)) === 'pdf') continue;
-        $issuer = scan_issuer($read['data']);
-        if ($issuer === '' || $read['data']['doc_date'] === '') continue;
-        $groups[$issuer . '|' . $read['data']['doc_date']][] = $file;
+        $files[] = $file;
     }
+    $parent = array_combine($files, $files);
+    $find = function ($x) use (&$parent, &$find) { return $parent[$x] === $x ? $x : ($parent[$x] = $find($parent[$x])); };
+    $link = function ($x, $y) use (&$parent, $find) { $parent[$find($y)] = $find($x); };
+
+    $byKey = [];
+    foreach ($files as $i => $file) {
+        $d = $batch['pages'][$file]['data'];
+        $issuer = scan_issuer($d);
+        if ($issuer !== '' && $d['doc_date'] !== '') $byKey['id:' . $issuer . '|' . $d['doc_date']][] = $file;
+        $num = preg_replace('/\s+/', '', $d['doc_number']);
+        if (strlen($num) >= 3) $byKey['no:' . $num][] = $file;
+        $headerless = $issuer === '' || $d['doc_date'] === '';
+        if ($i > 0 && $headerless && (!empty($d['continuation']) || ($d['page_number'] ?? 0) > 1)) $link($files[$i - 1], $file);
+    }
+    foreach ($byKey as $group) foreach (array_slice($group, 1) as $file) $link($group[0], $file);
+
+    $groups = [];
+    foreach ($files as $file) $groups[$find($file)][] = $file;
     return array_values(array_filter($groups, fn($g) => count($g) > 1));
+}
+
+/** A page without a header of its own — it is the rest of a document begun on another page. */
+function scan_page_is_continuation(array $d): bool
+{
+    return (scan_issuer($d) === '' || $d['doc_date'] === '') && (!empty($d['continuation']) || ($d['page_number'] ?? 0) > 1);
 }
 
 /**
@@ -225,6 +253,10 @@ function scan_batch_build_docs(array $batch, array $assign): array
     }
     $batch['docs'] = [];
     foreach ($docs as $files) {
+        $pageNo = array_map(fn($f) => $batch['pages'][$f]['data']['page_number'] ?? null, $files);
+        if (count($files) > 1 && !in_array(null, $pageNo, true) && count(array_unique($pageNo)) === count($files)) {
+            array_multisort($pageNo, $files);   // the printed page numbers
+        }
         $reads = array_map(fn($f) => $batch['pages'][$f], $files);
         $work = ['id' => bin2hex(random_bytes(6)), 'shop' => $batch['shop'], 'files' => $files, 'subdir' => '', 'created' => date('c'),
             'batch' => $batch['id'], 'read' => count($reads) === 1 ? $reads[0] : InvoiceReader::merge($reads), 'read_at' => date('c')];

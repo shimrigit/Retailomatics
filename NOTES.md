@@ -4348,3 +4348,27 @@ document list from the old screens (OCRsanity, commercial layer).
 4 models; report in `preProcessDir/Trial/report.html`. gpt-5.5 was the only one that read
 suppliers, dates and rows reliably; the VAT id was read the same on every document of a
 supplier while its name was not.
+
+## גיול חובות (`Giyul/`) - Nov 22, 2026
+
+`http://localhost/website/Giyul/` (local only). Replaces the manual step: Export.xls → Claude in the browser with a prompt.
+- Input: the Export.xls the Comax Gateway action `giyul` (PlaywrightDemo/actions/giyul.js) files in
+  `Z:\RetailomaticsCloud\RetailomaticsArchive\<shop>\Collection\<yyyy>\<mm_Month>\<dd-mm-yy> CO\`. It is Comax's HTML
+  in windows-1255 (read with iconv + PhpSpreadsheet's Html reader). The page lists the shop's CO folders with an Export
+  (newest first) and warns when the export is > 3 days before the run day.
+- **▶ בצע** runs it (nothing runs by itself on opening): it lists the CO folders again — an export that arrived since
+  (a new download in the Gateway) is chosen by itself, otherwise the chosen one stays — and shows the table and the
+  messages. Changing the day or the file hides the result until בצע. Nothing is written before "שמור בתיקייה".
+- The table is found by its header ("לקוח" … "יתרה"), not by fixed rows (the HTML's rows differ from Excel's view);
+  kept: לקוח | שם לקוח | יתרה | the 4 latest months | "עד …" (the prompt's "delete rows 1–4, columns C–J"), the total row.
+- **Run day** (default today): XXXX = the month before it, YYYY = 4 months before it (with their years).
+- Save → into the export's CO folder: `גיול חובות - <run day dd-mm-yy>-מעובד.xlsx` (header row 25 high; יתרה > threshold →
+  light yellow, not the total; the 4 latest months empty → light purple, over the yellow), `גיול חובות - <dd-mm-yy>.png`
+  (the table, made in the browser with html2canvas), `גיול חובות - <dd-mm-yy> - הודעות.txt`. Existing files for that run
+  day → a warning (delete by hand, or save anyway → " (2)").
+- Messages: big debts (יתרה > threshold), old debts (יתרה > 0 and the 4 latest months empty); by customer number; without
+  the excluded customers (the xlsx keeps everyone); copy buttons; editable before copying/saving.
+- Per-shop settings `configDir/giyul_settings.json`: recipients + the chosen one
+  ("דין" — default until changed), signature, threshold, excluded names, the two intro texts with {XXXX} {XXXX_YEAR}
+  {YYYY} {YYYY_YEAR}. BernardYahud: excluded דין פלד, ארז חי, סופר ברקת, חובות אבודים.
+- Files: `Giyul/lib.php` (reading, marks, messages, xlsx), `Giyul/api.php` (list / settings / preview / save), `Giyul/index.php`.

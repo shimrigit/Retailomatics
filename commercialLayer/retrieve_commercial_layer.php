@@ -65,8 +65,10 @@ try {
             return stripos(basename($f), $shopName) === 0 && stripos(basename($f), 'OCRsanity') !== 0;
         });
     } else {
-        $priceListDir = __DIR__ . '/price_list_files/';
-        $priceListFiles = glob($priceListDir . $shopName . '*.xlsx');
+        // the shop's newest Gateway download, else price_list_files (price_list_source.php)
+        require_once __DIR__ . '/price_list_source.php';
+        $pl = clFindPriceList($shopName);
+        $priceListFiles = $pl ? [$pl['path']] : [];
     }
 
     if (empty($priceListFiles)) {
@@ -86,6 +88,8 @@ try {
     // Load Price List Excel file
     $plSpreadsheet = IOFactory::load($priceListPath);
     $plSheet = $plSpreadsheet->getActiveSheet();
+    require_once __DIR__ . '/price_list_source.php';
+    $priceListColumns = clPriceListColumns($plSheet, $priceListColumns);   // by the header row
     $plHighestRow = $plSheet->getHighestRow();
 
     // Get column letters from PriceListColumns configuration

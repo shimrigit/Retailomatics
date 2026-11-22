@@ -135,8 +135,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             "🔧 <strong>Technical details:</strong> " . htmlspecialchars($e->getMessage()));
     }
 
-    // Get PriceListColumns mapping from shop config
-    $priceListColumns = $shopConfig['PriceListColumns'];
+    // The columns: by the header row (the Gateway's export and the old files differ), else the
+    // shop's PriceListColumns — commercialLayer/price_list_source.php
+    require_once __DIR__ . '/price_list_source.php';
+    try {
+        $priceListColumns = clPriceListColumns($priceListSheet, $shopConfig['PriceListColumns']);
+    } catch (RuntimeException $e) {
+        die('❌ <strong>' . htmlspecialchars($e->getMessage()) . '</strong><br>📄 ' . htmlspecialchars(basename($priceListPath)));
+    }
     $plItemERPNameCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($priceListColumns['ItemERPName']);
     $plBarcodeCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($priceListColumns['Barcode']);
     $plDepartmentCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($priceListColumns['Department']);

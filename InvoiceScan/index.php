@@ -19,8 +19,50 @@ $lastShop = $_SESSION['invoiceScanShop'] ?? '';
 $files = scan_waiting_files();
 $started = scan_started();
 $typeHe = ['invoice' => 'חשבונית', 'delivery_note' => 'תעודת משלוח', 'credit_or_return' => 'זיכוי / החזרה', 'other' => 'אחר'];
+require_once SCAN_ROOT . '/harmonizedFlow/invoice_archive.php';
+$pendingZ = invPendingList();
 scan_page_start('בחירת מסמכים');
 ?>
+<?php if ($pendingZ): ?>
+    <!-- Files of finished documents that couldn't reach Z (invoice_archive.php): they wait in ZpendingDir. -->
+    <div class="card" id="zPending" style="border-color:#c62828;background:#ffebee">
+        <b>⚠ <?= count($pendingZ) ?> קבצים של מסמכים שהסתיימו מחכים ל-Z</b>
+        (<?= htmlspecialchars(implode(', ', array_unique(array_map(fn($p) => $p['shop'], $pendingZ)))) ?>) —
+        Z לא היה זמין כשהם נשמרו. הם ב-ZpendingDir ויועברו לארכיון של כל חנות, ליום שבו עובדו.
+        <button type="button" id="zFlushBtn" onclick="zFlush()" style="margin-right:10px">העבר ל-Z</button>
+        <span id="zFlushMsg"></span>
+    </div>
+    <script>
+    async function zFlush() {
+        const btn = document.getElementById('zFlushBtn'), msg = document.getElementById('zFlushMsg');
+        btn.disabled = true; msg.textContent = 'מעביר…';
+        try {
+            const r = await (await fetch('../harmonizedFlow/z_pending.php', {method: 'POST'})).json();
+            if (r.count === 0) document.getElementById('zPending').innerHTML = '✓ הועברו ' + r.moved + ' קבצים ל-Z';
+            else { msg.textContent = (r.errors || []).join(' · ') || ('נשארו ' + r.count); btn.disabled = false; }
+        } catch (e) { msg.textContent = '✘ ' + e.message; btn.disabled = false; }
+    }
+    </script>
+<?php endif; ?>
+<?php $openBatches = scan_open_batches(); if ($openBatches): ?>
+    <div class="card" style="border-color:#1d3557">
+        <h2>קריאות שלא הושלמו (<?= count($openBatches) ?>)</h2>
+        <table style="width:100%">
+            <tr><th>התחלה</th><th>חנות</th><th>יום עיבוד</th><th>קבצים</th><th>מצב</th><th></th></tr>
+            <?php foreach ($openBatches as $b): ?>
+                <tr>
+                    <td><?= scan_h(date('d/m/Y H:i', strtotime($b['created']))) ?></td>
+                    <td><?= scan_h($b['shop']) ?></td>
+                    <td><?= scan_h(date('d/m/Y', strtotime(scan_day_or_today($b['day'] ?? '')))) ?></td>
+                    <td><?= $b['files'] ?></td>
+                    <td><?= $b['finished'] ? '<span class="ok">✔ נקראו כולם</span>' . ($b['errors'] ? ' · <span class="warn">' . $b['errors'] . ' לא נקראו</span>' : '') : 'נקראו ' . $b['read'] . ' מתוך ' . $b['files'] . ' — הקריאה רצה' ?></td>
+                    <td><a class="btn" href="scan.php?resume=<?= scan_h($b['id']) ?>"><?= $b['finished'] ? 'המשך לחלוקה למסמכים' : 'הצג' ?></a></td>
+                </tr>
+            <?php endforeach; ?>
+        </table>
+        <p class="mute">קריאה שהחלון שלה נסגר ממשיכה ונשמרת — מכאן ממשיכים ממנה בלי לקרוא שוב.</p>
+    </div>
+<?php endif; ?>
 <?php if ($started): ?>
     <div class="card" style="overflow-x:auto;border-color:#d9a400">
         <h2>מסמכים שהתחלתם ולא סיימתם (<?= count($started) ?>)</h2>
@@ -53,7 +95,56 @@ scan_page_start('בחירת מסמכים');
                 <option<?= $s === $lastShop ? ' selected' : '' ?>><?= scan_h($s) ?></option>
             <?php endforeach; ?>
         </select>
+        <!-- The processing day: the day the documents are entered into Comax (prices, new products) —
+             not the invoices' own dates. The archive folder on Z is by it ("dd-mm-yy IN"). -->
+        <label style="margin-right:18px">יום עיבוד:
+            <input type="date" name="day" value="<?= scan_h(scan_day_or_today($_SESSION['invoiceScanDay'] ?? '')) ?>" required>
+        </label>
+        <small class="mute">היום שבו המסמכים נקלטים לקומקס — לא התאריך שעל החשבוניות. לפיו נשמרים בארכיון ("dd-mm-yy IN").</small>
     </div>
+    <!-- The shop's price list for the commercial layer: made from the newest items file the Comax
+         Gateway downloaded ("ייצוא פריטים מורחב") — commercialLayer/update_price_list.php. -->
+    <div class="card" id="plCard" style="display:none">
+        <h2>רשימת מחירים לשלב המסחרי</h2>
+        <div id="plStatus" class="mute">…</div>
+        <div style="margin-top:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <button type="button" class="second" id="plUpdate">עדכן רשימת מחירים מקובץ פריטים</button>
+            <span id="plMsg"></span>
+        </div>
+    </div>
+    <script>
+    (function () {
+        const shopSel = document.getElementById('shop'), card = document.getElementById('plCard');
+        const status = document.getElementById('plStatus'), msg = document.getElementById('plMsg'), btn = document.getElementById('plUpdate');
+        const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+        function show(r) {
+            status.innerHTML = (r.current ? esc(r.current) : '<span class="warn">אין רשימת מחירים לחנות הזאת</span>')
+                + '<br>' + (r.items ? 'קובץ פריטים אחרון מקומקס: ' + esc(r.items.when) + (r.newer ? ' — <span class="warn">חדש יותר מרשימת המחירים: כדאי לעדכן</span>' : ' — הרשימה מעודכנת לפיו') : 'אין קובץ פריטים מורחב — הורד אותו מה-Gateway של קומקס ("ייצוא פריטים מורחב")');
+            btn.disabled = !r.items;
+        }
+        async function load() {
+            msg.textContent = '';
+            if (!shopSel.value) { card.style.display = 'none'; return; }
+            card.style.display = '';
+            status.textContent = '…';
+            try { show(await (await fetch('../commercialLayer/update_price_list.php?shop=' + encodeURIComponent(shopSel.value))).json()); }
+            catch (e) { status.textContent = '✘ ' + e.message; }
+        }
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            msg.className = 'mute';
+            msg.textContent = 'מעדכן…';
+            try {
+                const r = await (await fetch('../commercialLayer/update_price_list.php', { method: 'POST', body: new URLSearchParams({ shop: shopSel.value }) })).json();
+                show(r);
+                msg.className = r.ok ? 'ok' : 'warn';
+                msg.textContent = r.ok ? '✔ ' + r.message : '✘ ' + r.error;
+            } catch (e) { msg.className = 'warn'; msg.textContent = '✘ ' + e.message; btn.disabled = false; }
+        });
+        shopSel.addEventListener('change', load);
+        load();
+    })();
+    </script>
     <div class="card">
         <h2>2. מסמכים לעיבוד <span class="mute" style="font-weight:400">(<?= count($files) ?> קבצים ב-preProcessDir)</span></h2>
         <?php if (!$files): ?>

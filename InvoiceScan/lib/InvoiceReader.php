@@ -44,40 +44,58 @@ class InvoiceReader
     }
 
     /**
-     * Several documents at once, each read on its own (a few requests side by side).
+     * Reads several documents, $parallel at a time — a new one starts as soon as one finishes.
      * @param array<string, string[]> $docs  key => the document's pages
+     * @param callable|null $onDone  fn(string $key, array $result, int $done, int $total) after each document
      * @return array<string, array>  key => what read() returns, or ['error' => message]
      */
-    public static function readMany(array $docs, string $shopName, int $parallel = 6): array
+    public static function readMany(array $docs, string $shopName, int $parallel = 6, ?callable $onDone = null): array
     {
         $out = [];
-        foreach (array_chunk($docs, $parallel, true) as $batch) {
-            $mh = curl_multi_init();
-            $handles = [];
-            foreach ($batch as $key => $paths) {
+        $total = count($docs);
+        $queue = $docs;
+        $mh = curl_multi_init();
+        $inFlight = [];   // (int) handle id => [key, handle]
+        $finish = function (string $key, array $result) use (&$out, $onDone, $total) {
+            $out[$key] = $result;
+            if ($onDone) $onDone($key, $result, count($out), $total);
+        };
+        $startNext = function () use (&$queue, &$inFlight, $mh, $shopName, $finish) {
+            while ($queue) {
+                $key = (string) array_key_first($queue);
+                $paths = array_shift($queue);
                 try {
-                    $handles[$key] = self::request($paths, $shopName);
-                    curl_multi_add_handle($mh, $handles[$key]);
+                    $ch = self::request($paths, $shopName);
+                    curl_multi_add_handle($mh, $ch);
+                    $inFlight[spl_object_id($ch)] = [$key, $ch];
+                    return;
                 } catch (Throwable $e) {
-                    $out[$key] = ['error' => $e->getMessage()];
+                    $finish($key, ['error' => $e->getMessage()]);
                 }
             }
-            do {
-                curl_multi_exec($mh, $running);
-                if ($running) curl_multi_select($mh, 1.0);
-            } while ($running > 0);
-            foreach ($handles as $key => $ch) {
+        };
+        for ($i = 0; $i < $parallel; $i++) $startNext();
+        while ($inFlight) {
+            curl_multi_exec($mh, $running);
+            while ($info = curl_multi_info_read($mh)) {
+                $ch = $info['handle'];
+                [$key] = $inFlight[spl_object_id($ch)];
+                unset($inFlight[spl_object_id($ch)]);
                 try {
-                    $out[$key] = self::parse($ch, curl_multi_getcontent($ch));
+                    $result = self::parse($ch, curl_multi_getcontent($ch));
                 } catch (Throwable $e) {
-                    $out[$key] = ['error' => $e->getMessage()];
+                    $result = ['error' => $e->getMessage()];
                 }
                 curl_multi_remove_handle($mh, $ch);
                 curl_close($ch);
+                $finish($key, $result);
+                $startNext();
             }
-            curl_multi_close($mh);
+            if ($inFlight) curl_multi_select($mh, 1.0);
         }
-        return $out;
+        curl_multi_close($mh);
+        // in the order given
+        return array_replace(array_intersect_key(array_fill_keys(array_keys($docs), null), $out), $out);
     }
 
     /**

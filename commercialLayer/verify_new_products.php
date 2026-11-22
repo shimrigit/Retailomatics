@@ -136,7 +136,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['chp_search'])) {
         ob_start();
         $chpResults = $client->searchPrices($searchBarcode, $searchCity);
         ob_end_clean();
-        if (!$chpResults || empty($chpResults['prices']))
+        if (!empty($chpResults['suffixMatches']))
+            $chpError = 'הסיומת ' . $searchBarcode . ' מתאימה ל-' . count($chpResults['suffixMatches']) . ' מוצרים — בחר את המוצר:';
+        elseif (!$chpResults || empty($chpResults['prices']))
             $chpError = 'לא נמצאו תוצאות עבור הברקוד והעיר שהוזנו';
     }
 }
@@ -218,6 +220,7 @@ $npHeaders = array_values(array_slice($npData[0], 2));
         #hotContainer { overflow: hidden; position: relative; direction: ltr; }
 
         /* DepartmentMargin cells — system-set, read-only */
+        .htSuggestCell { background: #e3f2fd !important; font-style: italic; }   /* a department suggested by AI, not checked yet */
         .htCalcCell {
             background-color: #ffe0b2 !important;
             color: #000000 !important;
@@ -298,6 +301,9 @@ $npHeaders = array_values(array_slice($npData[0], 2));
             <button type="button" class="calculate-button" id="calcMarginsBtn" onclick="calculateMargins()">
                 🧮 Calculate Margins
             </button>
+            <button type="button" class="calculate-button" id="suggestDeptBtn" onclick="suggestDepartments()" title="מחלקה לכל מוצר בלי מחלקה, לפי שם המוצר ורשימת המחלקות של החנות — כהמלצה לבדיקה">🏷 המלץ מחלקות</button>
+            <button type="button" class="calculate-button" id="priceAllBtn" onclick="priceAllByDepartment()" title="מחיר מכירה = מחיר קנייה בתוספת מרווח המחלקה ומע&quot;מ, לכל השורות שיש להן מחלקה ומחיר קנייה">💲 חשב מחיר לפי מרווח מחלקה</button>
+            <button type="button" class="calculate-button" id="acceptDeptBtn" onclick="acceptSuggestions()" style="display:none;background:#2e7d32" title="המחלקות המומלצות (בכחול) הופכות למחלקות שנבחרו. אחת-אחת: לחיצה כפולה על התא הכחול">✔ אשר מחלקות מומלצות</button>
             <form id="finalizeForm" method="POST" style="display: inline;">
                 <input type="hidden" name="finalize" value="1">
                 <button type="button" class="finalize-button" id="finalizeBtn" onclick="saveAndFinalize()">
@@ -308,6 +314,7 @@ $npHeaders = array_values(array_slice($npData[0], 2));
         <div>
             <h1>🆕 Verify New Products</h1>
             <div class="file-info">File: <?= htmlspecialchars($npFileName) ?> | Shop: <?= htmlspecialchars($shopName) ?></div>
+            <?php if (!empty($_SESSION['harmonizedFlow']['priceListLabel'])): ?><div class="file-info"><?= htmlspecialchars($_SESSION['harmonizedFlow']['priceListLabel']) ?></div><?php endif; ?>
         </div>
     </div>
 
@@ -335,9 +342,19 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                 <div id="chpResultsContainer">
                     <?php if ($chpError): ?>
                         <div class="error-message">⚠️ <?= htmlspecialchars($chpError) ?></div>
+                        <?php if (!empty($chpResults['suffixMatches'])): ?>
+                            <div class="suffix-list" style="margin:8px 0;font-size:14px">
+                                <?php foreach ($chpResults['suffixMatches'] as $sm): ?>
+                                    <div><a href="#" class="suffix-pick" data-full-barcode="<?= htmlspecialchars($sm['barcode']) ?>" style="direction:ltr;display:inline-block"><?= htmlspecialchars($sm['barcode']) ?></a> — <?= htmlspecialchars($sm['name']) ?></div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
                     <?php endif; ?>
 
                     <?php if ($chpResults && !empty($chpResults['prices'])): ?>
+                        <?php if (!empty($chpResults['suffixOf'])): ?>
+                            <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:14px">נמצא לפי סיומת: <b dir="ltr"><?= htmlspecialchars($chpResults['suffixOf']) ?></b> ← ברקוד מלא <b dir="ltr"><?= htmlspecialchars($chpResults['barcode']) ?></b></div>
+                        <?php endif; ?>
                         <div class="chp-results">
                             <?php
                             $prices   = array_filter(array_map(fn($item) => is_numeric($item['price']) ? (float)$item['price'] : null, $chpResults['prices']));
@@ -419,6 +436,7 @@ $npHeaders = array_values(array_slice($npData[0], 2));
         const dirtyRows      = new Set();
         let activeRow = -1;   // the last row selected in the table — where a click in the price search copies to
         const highlightedCells = new Map(); // "row,col" → true; tracks bidirectional calc output
+        const suggestedDepts = new Set();   // rows whose department is an AI suggestion (blue until changed by hand)
 
         // ── Barcode renderer ────────────────────────────────────────────────
         function barcodeRenderer(hotInstance, TD, row, col, prop, value, cp) {
@@ -493,7 +511,11 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                     TH.style.color           = '#000';
                 }
             },
+            afterRenderer(TD, row, col) {
+                if (col === deptNameColIdx) TD.title = suggestedDepts.has(row) ? 'המלצה — לחיצה כפולה מאשרת, או "אשר מחלקות מומלצות" למעלה' : '';
+            },
             cells(row, col) {
+                if (col === deptNameColIdx) return { className: suggestedDepts.has(row) ? 'htSuggestCell' : '' };   // explicit '': Handsontable keeps a cell's last className
                 // Gold for bidirectional calculation output cell
                 if (highlightedCells.has(`${row},${col}`)) {
                     return { className: 'htGoldCell' };
@@ -507,12 +529,22 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                 }
                 return {};
             },
+            beforeOnCellMouseDown(event, coords) {
+                if (event.detail === 2 && coords.col === deptNameColIdx && suggestedDepts.has(coords.row)) {
+                    suggestedDepts.delete(coords.row);
+                    hot.render();
+                    refreshAcceptBtn();
+                    notify('✓ המחלקה בשורה ' + (coords.row + 1) + ' אושרה');
+                    event.stopImmediatePropagation();
+                }
+            },
             afterChange(changes, source) {
                 if (!changes || source === 'loadData' || source === 'calculated' || source === 'external') return;
                 changes.forEach(([row, col, , newVal]) => {
                     if (!editableCols.has(col)) return;
                     dirtyRows.add(row);
 
+                    if (col === deptNameColIdx && source !== 'suggest') { suggestedDepts.delete(row); refreshAcceptBtn(); }
                     if (col === deptNameColIdx && deptMarginColIdx >= 0) {
                         hot.setDataAtCell(row, deptMarginColIdx, marginOf(newVal), 'calculated');
                     } else if (col === salePriceColIdx) {
@@ -686,6 +718,68 @@ $npHeaders = array_values(array_slice($npData[0], 2));
         // ── A click in the price search copies into the table ────────────────
         // A price (a store's, the minimum, average or maximum) → SalePrice of the selected row;
         // the product's name → its ItemERPName. Written as if typed: the margin is recalculated and the row is saved.
+        // ── "המלץ מחלקות": a department for every row without one, by its name (AI) ──
+        async function suggestDepartments() {
+            const nameCol = itemERPNameColIdx >= 0 ? itemERPNameColIdx : -1, itemNameCol = npHeaders.indexOf('ItemName');
+            const rows = [];
+            for (let r = 0; r < hot.countRows(); r++) {
+                if (String(hot.getDataAtCell(r, deptNameColIdx) ?? '').trim() !== '') continue;
+                const name = String((nameCol >= 0 && hot.getDataAtCell(r, nameCol)) || (itemNameCol >= 0 && hot.getDataAtCell(r, itemNameCol)) || '').trim();
+                if (name !== '') rows.push([r, name]);
+            }
+            if (!rows.length) return notify('לכל השורות כבר יש מחלקה');
+            const btn = document.getElementById('suggestDeptBtn');
+            btn.disabled = true; btn.textContent = '🏷 ממליץ ל-' + rows.length + ' מוצרים…';
+            try {
+                const res = await (await fetch('suggest_departments.php', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ shop: <?php echo json_encode($shopName); ?>, names: rows.map(x => x[1]) }) })).json();
+                if (!res.ok) throw new Error(res.error || 'error');
+                let n = 0;
+                rows.forEach(([r], i) => {
+                    const d = res.departments[i];
+                    if (!d) return;
+                    suggestedDepts.add(r);
+                    hot.setDataAtCell(r, deptNameColIdx, d, 'suggest');
+                    n++;
+                });
+                hot.render();
+                refreshAcceptBtn();
+                notify('✓ הומלצו מחלקות ל-' + n + ' מתוך ' + rows.length + ' מוצרים (בכחול — בדוק ושנה אם צריך)');
+            } catch (e) {
+                notify('✘ ההמלצה נכשלה: ' + e.message);
+            }
+            btn.disabled = false; btn.textContent = '🏷 המלץ מחלקות';
+        }
+
+        // ── Accepting suggestions: all (the button), or one (double-click on its blue cell) ──
+        function refreshAcceptBtn() {
+            const b = document.getElementById('acceptDeptBtn');
+            b.style.display = suggestedDepts.size ? '' : 'none';
+            b.textContent = '✔ אשר מחלקות מומלצות (' + suggestedDepts.size + ')';
+        }
+        function acceptSuggestions() {
+            const n = suggestedDepts.size;
+            suggestedDepts.clear();
+            hot.render();
+            refreshAcceptBtn();
+            notify('✓ אושרו ' + n + ' מחלקות');
+        }
+
+        // ── "חשב מחיר לפי מרווח מחלקה": every row with a department (with a margin) and a purchase price ──
+        function priceAllByDepartment() {
+            const ready = [], priced = [];
+            for (let r = 0; r < hot.countRows(); r++) {
+                const okMargin = marginOf(hot.getDataAtCell(r, deptNameColIdx)).endsWith('%') && parseFloat(hot.getDataAtCell(r, actualUnitPriceColIdx)) > 0;
+                if (!okMargin) continue;
+                (parseFloat(hot.getDataAtCell(r, salePriceColIdx)) > 0 ? priced : ready).push(r);
+            }
+            if (!ready.length && !priced.length) return notify('אין שורות עם מחלקה ומחיר קנייה');
+            let rows = ready;
+            if (priced.length && confirm(priced.length + ' שורות כבר עם מחיר מכירה.\nלחשב גם אותן לפי מרווח המחלקה (המחיר הקיים יוחלף)?\n\nביטול = רק ' + ready.length + ' השורות שאין להן מחיר.')) rows = ready.concat(priced);
+            rows.forEach(r => priceByDepartment(r));
+            notify('✓ חושב מחיר לפי מרווח המחלקה ל-' + rows.length + ' שורות');
+        }
+
         function notify(text) {
             const n = document.getElementById('copiedNotification');
             n.textContent = text;
@@ -723,6 +817,15 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                 .catch(err => {
                     resultsContainer.innerHTML = `<div class="error-message">⚠️ שגיאה בחיפוש: ${err.message}</div>`;
                 });
+        });
+    
+        // Several barcodes end with the digits typed: a click searches the chosen full barcode.
+        document.getElementById('chpResultsContainer').addEventListener('click', e => {
+            const a = e.target.closest('.suffix-pick');
+            if (!a) return;
+            e.preventDefault();
+            document.getElementById('barcode').value = a.dataset.fullBarcode;
+            document.getElementById('chpSearchForm').requestSubmit();
         });
     </script>
 </body>

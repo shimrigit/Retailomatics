@@ -18,6 +18,7 @@
 session_start();
 require_once __DIR__ . '/lib/common.php';
 require_once SCAN_ROOT . '/vendor/autoload.php';
+require_once SCAN_ROOT . '/harmonizedFlow/invoice_archive.php';
 
 function approve_fail(string $msg, string $id): never
 {
@@ -62,8 +63,11 @@ $date = DateTime::createFromFormat('!Y-m-d', (string) ($_POST['doc_date'] ?? '')
 $vat = preg_replace('/\D/', '', (string) ($_POST['vat'] ?? ''));
 $docNumber = trim((string) ($_POST['doc_number'] ?? ''));
 $invoiceTotal = is_numeric($_POST['invoice_total'] ?? null) ? (float) $_POST['invoice_total'] : 0.0;
+$day = scan_day_or_today((string) ($_POST['day'] ?? $work['day'] ?? ''));   // the processing day (the archive's folder)
+$dayTime = strtotime("$day 12:00");
+$work['day'] = $day;
 if (!in_array($method, InvoiceReader::METHODS, true)) approve_fail('שיטה לא מוכרת.', $id);
-if (!$date) approve_fail('חסר תאריך למסמך.', $id);
+if (!$date) approve_fail('חסר תאריך למסמך. אם אין תאריך ברור — הזינו תאריך שבדקתם מול בעל העסק או הספק, או את יום העיבוד.', $id);
 if (!$read['items']) approve_fail('לא נקראו שורות מהמסמך — אין מה להעביר ל-OCRsanity.', $id);
 
 // ── 1. the supplier ─────────────────────────────────────────────────────────
@@ -103,19 +107,25 @@ $json = json_encode($suppliers, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSO
 file_put_contents(InvoiceReader::suppliersFile(), str_replace("\n", "\r\n", $json), LOCK_EX);   // the file's line endings
 
 // ── 2. the PDF, named as the flow expects ───────────────────────────────────
-$dmy = $date->format('d-m-y');
+// "<Supplier> <processing day dd-mm-yy> <Letter>.pdf" — the date in the name is the PROCESSING day
+// (all the documents processed on a day go on together), as in the old flow ("processDate").
+// The invoice's own date is kept in the data: OCRjson invoice_date → OCRsanity B3 (InvoiceDate).
+// The letter: the first free one for this supplier on that processing day.
+$dmy = date('d-m-y', $dayTime);
 $pdfFile = $work['approved']['pdfFile'] ?? '';
-if ($pdfFile === '' || !str_starts_with($pdfFile, "$key $dmy ")) {   // first approval, or the supplier / date was changed
+if ($pdfFile === '' || !str_starts_with($pdfFile, "$key $dmy ")) {   // first approval, or the supplier / processing day was changed
     if ($pdfFile !== '') @unlink(SCAN_IN_DIR . "/$pdfFile");
     $pdfFile = '';
     foreach (range('A', 'Z') as $letter) {
         $candidate = "$key $dmy $letter.pdf";
-        if (!file_exists(SCAN_IN_DIR . "/$candidate") && !file_exists(SCAN_ROOT . "/uploads/$candidate")) {
+        if (!file_exists(SCAN_IN_DIR . "/$candidate")
+                && !file_exists(invArchiveDir($work['shop'], $dayTime) . "/$candidate")     // archived that day (cleanup_process.php)
+                && !file_exists(invPendingDir($work['shop'], $dayTime) . "/$candidate")) {  // … or waiting for Z
             $pdfFile = $candidate;
             break;
         }
     }
-    if ($pdfFile === '') approve_fail("יש כבר 26 מסמכים של $key מתאריך $dmy.", $id);
+    if ($pdfFile === '') approve_fail("יש כבר 26 מסמכים של $key ביום העיבוד $dmy — בחרו יום עיבוד אחר.", $id);
 }
 $letter = substr(pathinfo($pdfFile, PATHINFO_FILENAME), -1);
 $pdfPath = SCAN_IN_DIR . "/$pdfFile";
@@ -167,7 +177,7 @@ foreach ($read['items'] as $i => $it) {
     }
     $table[] = $row;
 }
-$dateFull = $date->format('d-m-Y');
+$dateFull = date('d-m-Y', $dayTime);   // the processing day, as in the PDF's name (the flow's processDateFull)
 $ocrJsonFile = "OCRjson_{$key}_{$dateFull}_{$letter}_" . date('dmY_His') . '.json';
 $ocrJsonPath = SCAN_ROOT . '/AIocr/ocr_extracted/' . $ocrJsonFile;
 @mkdir(dirname($ocrJsonPath), 0755, true);
@@ -185,6 +195,7 @@ $_SESSION['harmonizedFlow'] = [
     'pdfFile' => $pdfFile,
     'pdfPath' => $pdfPath,
     'shopName' => $work['shop'],
+    'workDay' => $day,   // the processing day → the archive folder (cleanup_process.php)
     'supplierName' => $key,
     'processDate' => $dmy,
     'processDateFull' => $dateFull,

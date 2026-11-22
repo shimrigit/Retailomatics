@@ -8,6 +8,7 @@
  */
 
 require_once __DIR__ . '/InvoiceReader.php';
+date_default_timezone_set('Asia/Jerusalem');   // "today" (the processing day) is the shop's day; PHP here defaults to Berlin
 
 const SCAN_ROOT = __DIR__ . '/../..';
 const SCAN_IN_DIR = SCAN_ROOT . '/preProcessDir';
@@ -46,7 +47,7 @@ function scan_waiting_files(): array
  * The documents that were started and not finished, newest first:
  *  - read, not approved yet — its source files are still in preProcessDir;
  *  - approved, the flow after it not finished — its PDF is still in preProcessDir (the flow's
- *    cleanup moves the PDF to uploads/ when the document is done).
+ *    cleanup moves the PDF to the shop's archive on Z — or ZpendingDir — when the document is done).
  * One work file per document: of several readings of the same file, the latest.
  */
 function scan_started(): array
@@ -233,6 +234,16 @@ function scan_batch_groups(array $batch): array
     return array_values(array_filter($groups, fn($g) => count($g) > 1));
 }
 
+/**
+ * Where a page goes in its document, for sorting: the printed page number; else a page with a
+ * header first (1.5 — after a printed page 1), a continuation page last.
+ */
+function scan_page_rank(array $d): float
+{
+    if (!empty($d['page_number'])) return (float) $d['page_number'];
+    return scan_page_is_continuation($d) || !empty($d['continuation']) ? 99.0 : 1.5;
+}
+
 /** A page without a header of its own — it is the rest of a document begun on another page. */
 function scan_page_is_continuation(array $d): bool
 {
@@ -244,7 +255,7 @@ function scan_page_is_continuation(array $d): bool
  * same label are the pages of one document (in the order of the batch); a file without a
  * label is a document of its own.
  */
-function scan_batch_build_docs(array $batch, array $assign): array
+function scan_batch_build_docs(array $batch, array $assign, array $order = []): array
 {
     $docs = [];
     foreach ($batch['pages'] as $file => $read) {
@@ -253,12 +264,15 @@ function scan_batch_build_docs(array $batch, array $assign): array
     }
     $batch['docs'] = [];
     foreach ($docs as $files) {
-        $pageNo = array_map(fn($f) => $batch['pages'][$f]['data']['page_number'] ?? null, $files);
-        if (count($files) > 1 && !in_array(null, $pageNo, true) && count(array_unique($pageNo)) === count($files)) {
-            array_multisort($pageNo, $files);   // the printed page numbers
+        if (count($files) > 1) {
+            // the order the user set on the grouping screen ($order: file => page), else the suggestion
+            $rank = array_map(fn($f) => isset($order[$f]) ? (float) $order[$f] : scan_page_rank($batch['pages'][$f]['data']), $files);
+            $pos = array_keys($files);
+            array_multisort($rank, $pos, $files);   // ties keep the batch order
         }
         $reads = array_map(fn($f) => $batch['pages'][$f], $files);
-        $work = ['id' => bin2hex(random_bytes(6)), 'shop' => $batch['shop'], 'files' => $files, 'subdir' => '', 'created' => date('c'),
+        $work = ['id' => bin2hex(random_bytes(6)), 'shop' => $batch['shop'], 'day' => scan_day_or_today($batch['day'] ?? ''),
+            'files' => $files, 'subdir' => '', 'created' => date('c'),
             'batch' => $batch['id'], 'read' => count($reads) === 1 ? $reads[0] : InvoiceReader::merge($reads), 'read_at' => date('c')];
         scan_save($work);
         $batch['docs'][] = $work['id'];
@@ -274,4 +288,34 @@ function scan_batch_next_url(array $batch): string
         if (empty(scan_load($docId)['approved'])) return 'confirm.php?id=' . $docId;
     }
     return 'batch.php?b=' . $batch['id'];
+}
+
+/**
+ * The processing day ("יום עיבוד", Y-m-d): the day the documents go into Comax, chosen on index.php
+ * (a batch's 'day', copied to each document's work file, changeable on confirm.php). The archive
+ * on Z is by it (harmonizedFlow/invoice_archive.php). Anything not a valid date → today.
+ */
+function scan_day_or_today(string $day): string
+{
+    $d = DateTime::createFromFormat('!Y-m-d', $day);
+    return $d && $d->format('Y-m-d') === $day ? $day : date('Y-m-d');
+}
+
+/**
+ * Batches whose documents were never built — the window was closed while reading, or right after:
+ * [{id, shop, created, files, read, errors, finished}], newest first (index.php offers them again).
+ */
+function scan_open_batches(): array
+{
+    $out = [];
+    foreach (glob(SCAN_WORK_DIR . '/batch_*.json') ?: [] as $path) {
+        $b = json_decode((string) @file_get_contents($path), true);
+        if (!is_array($b) || !empty($b['docs']) || empty($b['pages']) && empty($b['files'])) continue;
+        $out[] = ['id' => $b['id'], 'shop' => $b['shop'], 'created' => $b['created'], 'day' => $b['day'] ?? '',
+            'files' => count($b['files'] ?? $b['pages']), 'read' => count($b['pages']),
+            'errors' => count(array_filter($b['pages'], fn($p) => isset($p['error']))),
+            'finished' => !empty($b['finished']) || !isset($b['files'])];
+    }
+    usort($out, fn($a, $b) => strcmp($b['created'], $a['created']));
+    return $out;
 }

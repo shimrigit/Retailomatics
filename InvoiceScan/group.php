@@ -18,13 +18,16 @@ $groups = scan_batch_groups($batch);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $assign = [];
+    $order = [];   // file => its page in its document (the "עמוד" choice)
     foreach ($groups as $gi => $files) {
         foreach ($files as $fi => $file) {
             $n = (int) ($_POST['doc'][$gi][$fi] ?? 0);
             if ($n >= 1 && $n <= count($files)) $assign[$file] = "g{$gi}d{$n}";
+            $p = (int) ($_POST['page'][$gi][$fi] ?? 0);
+            if ($p >= 1) $order[$file] = $p;
         }
     }
-    header('Location: ' . scan_batch_next_url(scan_batch_build_docs($batch, $assign)));
+    header('Location: ' . scan_batch_next_url(scan_batch_build_docs($batch, $assign, $order)));
     exit;
 }
 if (!$groups) {
@@ -77,6 +80,13 @@ scan_page_start('דפים שאולי שייכים יחד');
             }
         }
         $allSame = count(array_unique($suggest)) === 1;
+        // the suggested page of each page in its document: by scan_page_rank (printed number, header, continuation)
+        $pageSuggest = [];
+        foreach (array_unique($suggest) as $docNo) {
+            $inDoc = array_keys(array_filter($suggest, fn($x) => $x === $docNo));
+            usort($inDoc, fn($a, $b) => [scan_page_rank($batch['pages'][$files[$a]]['data']), $a] <=> [scan_page_rank($batch['pages'][$files[$b]]['data']), $b]);
+            foreach ($inDoc as $k => $fi) $pageSuggest[$fi] = $k + 1;
+        }
     ?>
         <div class="card group" data-g="<?= $gi ?>">
             <div class="bar">
@@ -84,6 +94,7 @@ scan_page_start('דפים שאולי שייכים יחד');
                 <button type="button" class="second one">הכול מסמך אחד</button>
                 <button type="button" class="second each">כל דף מסמך נפרד</button>
                 <span class="mute">ההצעה: <?= $allSame ? 'מסמך אחד — אותו מספר מסמך, או דף המשך' : count(array_unique($suggest)) . ' מסמכים — לפי מספרי המסמך שנקראו' ?></span>
+                <span class="gstate"></span>
             </div>
             <div class="pages">
                 <?php foreach ($files as $fi => $file): $d = $batch['pages'][$file]['data']; ?>
@@ -93,6 +104,12 @@ scan_page_start('דפים שאולי שייכים יחד');
                             <select name="doc[<?= $gi ?>][<?= $fi ?>]">
                                 <?php for ($k = 1; $k <= count($files); $k++): ?>
                                     <option value="<?= $k ?>"<?= $k === $suggest[$fi] ? ' selected' : '' ?>>מסמך <?= $k ?></option>
+                                <?php endfor; ?>
+                            </select>
+                            · עמוד:
+                            <select name="page[<?= $gi ?>][<?= $fi ?>]" class="pgno">
+                                <?php for ($k = 1; $k <= count($files); $k++): ?>
+                                    <option value="<?= $k ?>"<?= $k === $pageSuggest[$fi] ? ' selected' : '' ?>><?= $k ?></option>
                                 <?php endfor; ?>
                             </select>
                             · מספר שנקרא: <b dir="ltr"><?= scan_h($d['doc_number'] ?: '—') ?></b>
@@ -112,13 +129,34 @@ scan_page_start('דפים שאולי שייכים יחד');
     <button type="submit">המשך</button>
     <a class="btn second" href="index.php">חזרה לבחירת מסמכים</a>
 </form>
+<style>
+.bar button.on{background:#1d3557;color:#fff}
+.gstate{font-weight:600;padding:3px 10px;border-radius:12px;background:#e8f5e9;color:#1b7a3a}
+.gstate.flash{animation:fl .6s}@keyframes fl{from{background:#fff3b0}to{background:#e8f5e9}}
+</style>
 <script>
+// Each group: the page colours, the active button and a line saying what "המשך" will build.
 document.querySelectorAll('.group').forEach(g => {
     const pages = [...g.querySelectorAll('.pg')];
-    const paint = () => pages.forEach(p => p.dataset.doc = p.querySelector('select').value);
-    pages.forEach(p => p.querySelector('select').addEventListener('change', paint));
-    g.querySelector('.one').addEventListener('click', () => { pages.forEach(p => p.querySelector('select').value = 1); paint(); });
-    g.querySelector('.each').addEventListener('click', () => { pages.forEach((p, i) => p.querySelector('select').value = i + 1); paint(); });
+    const doc = p => p.querySelector('select').value, pg = p => p.querySelector('.pgno');
+    const one = g.querySelector('.one'), each = g.querySelector('.each'), st = g.querySelector('.gstate');
+    const paint = (flash) => {
+        pages.forEach(p => p.dataset.doc = doc(p));
+        const docs = {};
+        pages.forEach(p => (docs[doc(p)] = docs[doc(p)] || []).push(p));
+        const n = Object.keys(docs).length;
+        const order = list => list.slice().sort((a, b) => pg(a).value - pg(b).value).map(p => pg(p).value).join(', ');
+        st.textContent = n === 1
+            ? '✔ יאוחדו למסמך אחד בן ' + pages.length + ' עמודים'
+            : '✔ ' + n + ' מסמכים: ' + Object.entries(docs).map(([d, l]) => 'מסמך ' + d + (l.length > 1 ? ' (' + l.length + ' עמודים)' : '')).join(' · ');
+        one.classList.toggle('on', n === 1);
+        each.classList.toggle('on', n === pages.length && pages.length > 1);
+        if (flash) { st.classList.remove('flash'); void st.offsetWidth; st.classList.add('flash'); }
+    };
+    pages.forEach(p => p.querySelectorAll('select').forEach(s => s.addEventListener('change', () => paint(true))));
+    one.addEventListener('click', () => { pages.forEach(p => p.querySelector('select').value = 1); paint(true); });
+    each.addEventListener('click', () => { pages.forEach((p, i) => { p.querySelector('select').value = i + 1; pg(p).value = 1; }); paint(true); });
+    paint(false);
 });
 </script>
 <?php scan_page_end();

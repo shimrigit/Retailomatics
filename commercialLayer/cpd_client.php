@@ -130,8 +130,14 @@ class CPDClient {
         return !$c['newest'] || $c['newest'] < CPDClient::today() || $c['warn'] !== [];
     }
 
-    /** The product card (products row) for a barcode, or null. */
-    public function card($barcode) {
+    /**
+     * The product card (products row) for a barcode, or null.
+     * Not found as is, and 6–11 digits: the end of a barcode (an invoice that prints only the
+     * last digits, as CHP accepts) — the one product whose barcode ends with them; several such
+     * products → null, and $suffixMatches lists them ([{barcode, name}]) for the caller to show.
+     */
+    public function card($barcode, &$suffixMatches = null) {
+        $suffixMatches = [];
         if (!$this->db) return null;
         $barcode = trim((string) $barcode);
         $q = $this->db->prepare('SELECT * FROM products WHERE barcode = ?');
@@ -140,6 +146,14 @@ class CPDClient {
             if ($key === '') continue;
             $q->execute([$key]);
             if ($card = $q->fetch(PDO::FETCH_ASSOC)) return $card;
+        }
+        $digits = ltrim($barcode, '0');
+        if (preg_match('/^\d{6,11}$/', $barcode) && strlen($digits) >= 6) {
+            $q = $this->db->prepare("SELECT * FROM products WHERE barcode LIKE ? LIMIT 20");
+            $q->execute(['%' . $digits]);
+            $rows = $q->fetchAll(PDO::FETCH_ASSOC);
+            if (count($rows) === 1) return $rows[0] + ['suffix_of' => $barcode];
+            $suffixMatches = array_map(fn($r) => ['barcode' => $r['barcode'], 'name' => trim(preg_replace('/\s+/u', ' ', $r['name']))], $rows);
         }
         return null;
     }
@@ -162,8 +176,8 @@ class CPDClient {
     public function searchPrices($barcode, $city = null, $aiName = null) {
         if (!$this->db) return false;
         $empty = ['productInfo' => '', 'productName' => '', 'prices' => [], 'source' => 'CPD'];
-        $card = $this->card($barcode);
-        if (!$card) return $empty;
+        $card = $this->card($barcode, $suffixMatches);
+        if (!$card) return $empty + ($suffixMatches ? ['suffixMatches' => $suffixMatches] : []);
 
         $region = $this->regionKey($city);
         $hasRegion = (bool) $this->db->query("SELECT 1 FROM pragma_table_info('stores') WHERE name = 'region'")->fetchColumn();
@@ -228,6 +242,7 @@ class CPDClient {
             'aiName'       => !empty($aiName['product']),
             'national'     => $national,   // set when the prices are the national range, not the region's
             'region'       => $this->regionName($region),
+            'suffixOf'     => $card['suffix_of'] ?? null,   // found by the end of the barcode typed
             'source'       => 'CPD',
         ];
     }

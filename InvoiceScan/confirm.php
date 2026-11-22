@@ -85,7 +85,10 @@ scan_page_start('בדיקה ואישור' . ($place !== false && count($batchDoc
                         <small>נשמר לספק, ובפעם הבאה הספק יזוהה לפיו.</small></td></tr>
                     <tr><th>סוג המסמך</th><td><?= scan_h($typeHe[$read['doc_type']] ?? $read['doc_type']) ?> <span class="mute">(<?= scan_h($read['doc_type_printed']) ?>)</span></td></tr>
                     <tr><th>מספר</th><td><input type="text" name="doc_number" value="<?= scan_h($read['doc_number']) ?>" dir="ltr"></td></tr>
-                    <tr><th>תאריך</th><td><input type="date" name="doc_date" value="<?= scan_h($read['doc_date']) ?>" required></td></tr>
+                    <tr><th>תאריך החשבונית</th><td><input type="date" name="doc_date" value="<?= scan_h($read['doc_date']) ?>" required>
+                        <small>חובה. אין תאריך ברור? תאריך שבדקתם מול בעל העסק / הספק, או את יום העיבוד.</small></td></tr>
+                    <tr><th>יום עיבוד</th><td><input type="date" name="day" value="<?= scan_h(scan_day_or_today($work['day'] ?? '')) ?>" required>
+                        <small>היום שבו המסמך נקלט לקומקס. ממנו שם הקובץ ("Tnuva dd-mm-yy A.pdf") ותיקיית הארכיון ("dd-mm-yy IN").</small></td></tr>
                     <tr><th>סוג החשבונית (שיטה)</th><td>
                         <select name="method" id="method">
                             <?php foreach (InvoiceReader::METHODS as $m): ?>

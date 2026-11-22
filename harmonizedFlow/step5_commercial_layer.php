@@ -11,6 +11,7 @@
  */
 
 session_start();
+require_once __DIR__ . '/../commercialLayer/price_list_source.php';
 
 // Check if harmonized flow session exists
 if (!isset($_SESSION['harmonizedFlow'])) {
@@ -77,40 +78,17 @@ if ($isDemoMode) {
     $latestPriceListPath = $matchingPriceListFiles[0];
     $latestPriceListFile = basename($latestPriceListPath);
 } else {
-    // Normal mode: use price_list_files directory
-    $priceListDir = __DIR__ . '/../commercialLayer/price_list_files/';
-
-    if (!is_dir($priceListDir)) {
-        die("Error: Price list directory not found: " . htmlspecialchars($priceListDir));
+    // Normal mode: the shop's newest price list in commercialLayer/price_list_files
+    // (commercialLayer/price_list_source.php).
+    $pl = clFindPriceList($shopName);
+    if (!$pl) {
+        die("Error: No price list for shop '" . htmlspecialchars($shopName) . "'.<br><br>" .
+            "Download the items file from the Comax Gateway (ייצוא פריטים מורחב), then press \"עדכן רשימת מחירים מקובץ פריטים\" " .
+            "on the Invoice Scan start screen — or put a file starting with the shop name in commercialLayer/price_list_files.");
     }
-
-    $allPriceListFiles = glob($priceListDir . '*.xlsx');
-
-    if (empty($allPriceListFiles)) {
-        die("Error: No price list files (.xlsx) found in price_list_files directory: " . htmlspecialchars($priceListDir));
-    }
-
-    $matchingPriceListFiles = [];
-    foreach ($allPriceListFiles as $file) {
-        $fileName = basename($file);
-        if (stripos($fileName, $shopName) !== false) {
-            $matchingPriceListFiles[] = $file;
-        }
-    }
-
-    if (empty($matchingPriceListFiles)) {
-        $availableFiles = array_map('basename', $allPriceListFiles);
-        die("Error: No price list file found for shop '{$shopName}' in price_list_files directory.<br><br>" .
-            "Available price list files:<br>- " . implode('<br>- ', $availableFiles) . "<br><br>" .
-            "Note: The shop name must appear in the filename.");
-    }
-
-    usort($matchingPriceListFiles, function($a, $b) {
-        return filemtime($b) - filemtime($a);
-    });
-
-    $latestPriceListPath = $matchingPriceListFiles[0];
-    $latestPriceListFile = basename($latestPriceListPath);
+    $latestPriceListPath = $pl['path'];
+    $latestPriceListFile = $pl['name'];
+    $_SESSION['harmonizedFlow']['priceListLabel'] = clPriceListLabel($pl);
 }
 
 // 4. Get the invoice PDF from session (may not exist if user skipped PDF)

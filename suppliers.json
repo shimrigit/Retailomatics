@@ -143,7 +143,10 @@
             "UnitPrice": 2,
             "LineTotal": 1
         },
-        "vatId": "5151668920"
+        "vatId": "5151668920",
+        "aliases": [
+            "תנובה בטח - מרחב דרום"
+        ]
     },
     {
         "supplierName": "TnuvaMeat",

@@ -147,8 +147,21 @@ $nextUrl = !empty($_SESSION['invoiceScanReturn']) ? '/website/InvoiceScan/next.p
         <p class="subtitle">Files have been organized and moved to their final locations</p>
 
         <div class="files-section">
-            <div class="section-header">📦 Moved Files (to uploads/)</div>
-            <div id="movedFilesContainer"></div>
+            <div class="section-header">🗄 נשמר בארכיון החנות</div>
+            <div id="archiveDir" class="file-location" style="direction:ltr;text-align:left;margin-bottom:8px"></div>
+            <div id="archivedFilesContainer"></div>
+        </div>
+
+        <div class="files-section" id="errorsSection" style="display:none">
+            <div class="section-header" style="background:#c62828">⚠ בעיות</div>
+            <div id="errorsContainer"></div>
+        </div>
+
+        <div class="files-section" id="pendingSection" style="display:none">
+            <div class="section-header" style="background:#e65100">⏳ Z לא זמין — הקבצים מחכים ב-ZpendingDir</div>
+            <div id="pendingContainer" class="file-item staying"></div>
+            <button type="button" id="flushBtn" onclick="flushPending()" style="margin-top:8px;padding:8px 16px;font-size:15px;cursor:pointer">העבר ל-Z</button>
+            <span id="flushMsg" style="margin-right:10px"></span>
         </div>
 
         <div class="files-section">
@@ -156,7 +169,7 @@ $nextUrl = !empty($_SESSION['invoiceScanReturn']) ? '/website/InvoiceScan/next.p
             <div id="stayingFilesContainer"></div>
         </div>
 
-        <div class="redirect-message">
+        <div class="redirect-message" id="redirectMsg">
             <span class="loader"></span>
             Redirecting to next invoice in <span id="countdown">2</span> seconds...
         </div>
@@ -167,40 +180,58 @@ $nextUrl = !empty($_SESSION['invoiceScanReturn']) ? '/website/InvoiceScan/next.p
         const urlParams = new URLSearchParams(window.location.search);
         const resultsJson = urlParams.get('results');
 
+        let hasErrors = false;
         if (resultsJson) {
             try {
                 const results = JSON.parse(decodeURIComponent(resultsJson));
                 displayResults(results);
+                hasErrors = (results.errors || []).length > 0 || results.pendingTotal > 0;   // stop and show
             } catch (e) {
                 console.error('Error parsing results:', e);
             }
         }
 
+        // files waiting for Z: the notice and "העבר ל-Z"
+        function showPending(total, detail) {
+            document.getElementById('pendingSection').style.display = '';
+            document.getElementById('pendingContainer').innerHTML = `<div class="file-name">${total} קבצים מחכים ל-Z (מכל המסמכים)</div>` + (detail ? `<div class="file-location">${detail}</div>` : '');
+        }
+        async function flushPending() {
+            const btn = document.getElementById('flushBtn'), msg = document.getElementById('flushMsg');
+            btn.disabled = true; msg.textContent = 'מעביר…';
+            try {
+                const r = await (await fetch('z_pending.php', {method: 'POST'})).json();
+                if (r.count === 0) {
+                    document.getElementById('pendingContainer').innerHTML = `<div class="file-name">✓ הועברו ${r.moved} קבצים ל-Z — אין קבצים שמחכים</div>`;
+                    msg.textContent = ''; btn.style.display = 'none';
+                } else {
+                    msg.textContent = (r.errors || []).join(' · ') || `נשארו ${r.count}`;
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                msg.textContent = '✘ ' + e.message; btn.disabled = false;
+            }
+        }
+
         function displayResults(results) {
-            const movedContainer = document.getElementById('movedFilesContainer');
             const stayingContainer = document.getElementById('stayingFilesContainer');
+            const esc = t => String(t).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
-            // Display moved files
-            if (results.movedFiles) {
-                if (results.movedFiles.pdf) {
-                    const file = results.movedFiles.pdf;
-                    movedContainer.innerHTML += `
-                        <div class="file-item moved">
-                            <div class="file-name">📄 PDF Invoice: ${file.fileName}</div>
-                            <div class="file-location">${file.from} <span class="arrow">→</span> ${file.to}</div>
-                        </div>
-                    `;
-                }
-
-                if (results.movedFiles.ocrJson) {
-                    const file = results.movedFiles.ocrJson;
-                    movedContainer.innerHTML += `
-                        <div class="file-item moved">
-                            <div class="file-name">📋 OCRjson: ${file.fileName}</div>
-                            <div class="file-location">${file.from} <span class="arrow">→</span> ${file.to}</div>
-                        </div>
-                    `;
-                }
+            // the archive (or the waiting folder when Z can't be reached)
+            const icons = {PDF: '📄', OCRsanity: '📊', 'PRICE-CHANGE': '💰', 'NEW-PRODUCTS': '✨', OCRjson: '📋'};
+            document.getElementById('archiveDir').textContent = results.archiveDir || '—';
+            const archived = document.getElementById('archivedFilesContainer');
+            const pending = (results.archivedFiles || []).filter(a => a.where === 'pending');
+            (results.archivedFiles || []).filter(a => a.where !== 'pending').forEach(a => {
+                archived.innerHTML += `<div class="file-item moved"><div class="file-name">${icons[a.kind] || '📁'} ${esc(a.fileName)}</div><div class="file-location">${esc(a.source)}</div></div>`;
+            });
+            if (!archived.innerHTML) archived.innerHTML = '<div class="file-item staying"><div class="file-name">לא נשמר דבר בארכיון</div></div>';
+            if (results.pendingTotal > 0) {
+                showPending(results.pendingTotal, pending.length ? `המסמך הזה: ${pending.map(a => esc(a.fileName)).join(', ')}<br>ב-${esc(results.pendingDir)}` : '');
+            }
+            if ((results.errors || []).length) {
+                document.getElementById('errorsSection').style.display = '';
+                document.getElementById('errorsContainer').innerHTML = results.errors.map(e => `<div class="file-item staying"><div class="file-name">${esc(e)}</div></div>`).join('');
             }
 
             // Display staying files
@@ -243,10 +274,14 @@ $nextUrl = !empty($_SESSION['invoiceScanReturn']) ? '/website/InvoiceScan/next.p
         }
 
         // Countdown and redirect
-        let countdown = 2;
+        // a problem stops the redirect, so it can be read
+        if (hasErrors) {
+            document.getElementById('redirectMsg').innerHTML = '<a href="' + <?= json_encode($nextUrl) ?> + '" style="font-weight:bold">המשך למסמך הבא ←</a>';
+        }
+        let countdown = hasErrors ? Infinity : 4;
         const countdownElement = document.getElementById('countdown');
 
-        const interval = setInterval(() => {
+        const interval = hasErrors ? null : setInterval(() => {
             countdown--;
             countdownElement.textContent = countdown;
 

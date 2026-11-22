@@ -61,6 +61,64 @@ Chrome with the session profile; scan the QR; it closes itself once the chats lo
 
 `MAX_JOBS_LISTED` in `gateway/server.js` 50 → 10 — only the list; older runs stay in `runs\` (log and files). A running or queued job is always among the newest, so the dashboard's activity refresh is unaffected. Takes effect when the Gateway is restarted (`start_gateway.bat`).
 
+### New products screen: suggested departments, price by department margin for all rows (November 21)
+
+`commercialLayer/verify_new_products.php`, two header buttons next to "Calculate Margins":
+- "🏷 המלץ מחלקות" — rows without a department → `suggest_departments.php` (POST JSON {shop, names})
+  → `npClassifyDepartments()` (NPharmonized/dcl_classify_lib.php, gpt-4.1-mini, the shop's
+  `<shop>_Departments.json`; only the shop's departments are accepted). The name: ItemERPName, else
+  ItemName. Filled through the table (source 'suggest' → DepartmentMargin follows, the row is dirty),
+  shown blue + italic (`htSuggestCell`) until accepted: "✔ אשר מחלקות מומלצות (N)" (shown while
+  there are suggestions) accepts all, a double-click on a blue cell accepts it, a hand change too.
+  (`cells()` returns `className: ''` for an accepted cell — Handsontable keeps a cell's last
+  className otherwise; that bug made the first version look as if nothing was accepted.)
+  The blue is only a mark — a suggested department is saved like any other.
+- "💲 חשב מחיר לפי מרווח מחלקה" — every row with a department margin and a purchase price gets the
+  per-row button's price (`priceByDepartment`: cost / (1 − margin) × 1.18, up to a whole shekel);
+  rows that already have a sale price only after a confirm.
+Checked: the endpoint (4 names → dairy / alcoholic drinks / toiletries / produce) and both buttons
+headless on the 21/11 Tnuva new-products file (שמנת סנטור → מצרי חלב ומצוננים 25% → 3), not saved.
+
+### CPD search by the end of a barcode (November 21)
+
+Invoices (e.g. Tnuva) print only the last digits ("14761049"); CHP found the product by them.
+`CPDClient::card($barcode, &$suffixMatches)`: not found as is, 6–11 digits → `products.barcode LIKE
+'%<digits>'` (leading zeros dropped; ~30–45 ms on ~158k products): one product → its card (with
+`suffix_of`); several → null and `$suffixMatches` ([{barcode, name}], max 20). `searchPrices()` returns
+`suffixOf` (found by the end) or `suffixMatches` (several). The CPD panels in
+`verify_new_products.php` / `verify_price_changes.php`: "נמצא לפי סיומת: X ← ברקוד מלא Y", or "הסיומת X
+מתאימה ל-N מוצרים — בחר את המוצר:" with the barcodes and names — a click searches that full barcode.
+CPDNamer and NP stage 2 get the single-match case through card(). Checked: 14761049 → 7290014761049
+תנובה שמנת חמוצה 15%; 100007 → 5 products listed. Shared suffixes are not rare: 6 digits often,
+8 digits — 238 cases in CPD. The panels themselves not yet clicked through.
+
+### Commercial layer: price list made from the Comax items file, by a button (November 21)
+
+The base of the invoice-scan upgrade's commercial part. Updating a shop's prices is two user steps:
+1. Comax Gateway "ייצוא פריטים מורחב" → `Z:\RetailomaticsCloud\RetailomaticsArchive\<shop>\ProductsList\רשימת מוצרים ומחירים ddmmyy hhmmss.xlsx`;
+2. Invoice Scan start screen, after choosing the shop: "עדכן רשימת מחירים מקובץ פריטים" →
+   `commercialLayer/update_price_list.php` → `clMakePriceList()` makes
+   `commercialLayer/price_list_files/<shop> ddmmyy_hhmmss.xlsx` (the time = the items file's download
+   time) in the manual files' 7 columns: פריט | שם פריט | ברקוד | מחלקה | שם מחלקה | מחיר מחירון 1 |
+   מחירון קניה אחרונה (codes as text). The card shows the price list in use and the newest items
+   file, and warns when the items file is newer. Pressing again for the same items file says it is
+   already up to date. All shops' price lists stay in price_list_files.
+- `commercialLayer/price_list_source.php`: `clFindPriceList($shop)` — the shop's newest price list in
+  price_list_files: a made one by the time in its name, a manual one (`<shop>*.xlsx`) by file time.
+  `clPriceListColumns()` — columns by the header row (שם פריט / ברקוד / מחלקה / מחיר מחירון 1 / מחירון
+  קניה אחרונה); without headers → the shop's `PriceListColumns`; only some → a clear error (the Gateway
+  export's columns differ: name 3, barcode 4, dept 5, price 12, cost 13 — never read by number).
+- Used by `harmonizedFlow/step5_commercial_layer.php` (normal mode; demo unchanged),
+  `process_commercial_layer.php`, `retrieve_commercial_layer.php`; the verification screens show
+  "מחירון: <file> — לפי קובץ הפריטים מקומקס מ-<date time>".
+- Gateway: BernardYahud's `exportPriceList` = "1 - מכירה ראשי" (comax_shops.json) — the export
+  refused without it.
+- Verified over HTTP: Bernard's price list made from the 21/11 16:59 items file (8,164 items, ~10 s),
+  a second press says up to date, a shop without an items file gets the message; the commercial
+  layer then takes `BernardYahud 211126_165906.xlsx` (columns 2/3/4/6/7). Compared with the April
+  manual file: of 7,213 barcodes in both, names / prices agree except what changed in Comax since.
+  Not yet run on a real invoice.
+
 ### Demo mode: WhatsApp download → NP → Comax Gateway in a separate folder (November 21)
 
 For showing the system to prospective customers on a demo WhatsApp group without touching a
@@ -82,7 +140,8 @@ same structure as `RetailomaticsArchive`.
 - Verified: paths, NP start (checkbox), WaFetch in NP mode (demo shop, badge, demo carried),
   confirm.php (NP folder created under RetailomaticsDemo, images read from the demo folder); the
   Gateway's paths by a node call and its page script parses — the Gateway must be restarted to load
-  the server change. A full demo run not done yet.
+  the server change. A full demo run (download → NP → Gateway import screen) was done by the user on
+  21/11/2026 and worked.
 
 ### Series module, step 3: "תן מחיר לפי סדרה" on NP's final screen (November 21)
 
@@ -3653,12 +3712,33 @@ All completion screens now have a single "Continue to next invoice" button that 
 
 **How it works:**
 - Button: "Cleanup and continue to next invoice" (replaces old "Continue" button)
-- Backend: `harmonizedFlow/cleanup_process.php` moves files:
-  - PDF invoice: `preProcessDir/` → `uploads/`
-  - OCRjson: `AIocr/ocr_extracted/` → `uploads/`
-  - CL/PC/NP: Stay in `commercialLayer/commercial_invoice_files/`
-- Results screen: `cleanup_results.php` shows moved files + staying files
-- 2-second countdown, then redirects to `start_harmonized_flow.php`
+- Backend: `harmonizedFlow/cleanup_process.php` (updated 22/11/2026) **archives the document per shop on Z**
+  (`harmonizedFlow/invoice_archive.php`):
+  `Z:\RetailomaticsCloud\RetailomaticsArchive\<shop>\Invoices\<YYYY>\<MM_Month>\<dd-mm-yy> IN\` — by the **processing day**
+  ("יום עיבוד" — the day the documents go into Comax, not the invoices' dates; e.g. a week's invoices processed on Sunday).
+  Chosen on `InvoiceScan/index.php` (default today, remembered in the session) → the batch's `day` → each document's
+  work file `day` → editable per document on `confirm.php` → `approve.php` puts it in session `harmonizedFlow.workDay`
+  → `cleanup_process.php`. The old flow without Invoice Scan: today. Timezone Asia/Jerusalem (PHP's default here is Berlin).
+  Per document, named by the PDF (`<Supplier> dd-mm-yy <Letter>`):
+  - `<base>.pdf` — moved from `preProcessDir/` (or the resume copy in `sanity_files/`); copy + size check + delete
+  - `<base> - OCRsanity.xlsx` — copy of the corrected data
+  - `<base> - שינויי מחיר.xlsx` / `<base> - מוצרים חדשים.xlsx` — copies of PRICE-CHANGE / NEW-PRODUCTS as approved
+  - `<base> - OCRjson.json` — the AI's raw reading (moved)
+  - a name taken that day gets ` (2)`…; the same content already there is reused (a document resumed the same day)
+  - Not archived: source photos (they are inside the PDF), CL (an intermediate).
+  - The work copies stay in `OCRsanity/sanity_files/` and `commercialLayer/commercial_invoice_files/`.
+  - Files are found from whichever name the finishing screen passes (clFile / pcFile / npFile): PC / NP are
+    `<CL base>_PRICE-CHANGE_…` / `_NEW-PRODUCTS_…` (the newest), sanity from the session or the CL name.
+  - **Z unreachable → `ZpendingDir/<shop>/<YYYY-MM-DD>/<archive name>`** (the path says where each file goes).
+    `ZpendingDir` should be empty. It replaced `uploads/` (22/11/2026); the 19 files that were in `uploads/`
+    (no shop known) are in `ZpendingDir/old/`, untouched and not listed.
+    - `harmonizedFlow/z_pending.php`: GET the list / POST moves everything to Z (`invPendingFlush`) to the day it was processed.
+    - The red bar on `InvoiceScan/index.php` ("N קבצים… מחכים ל-Z" + "העבר ל-Z"), and the orange section on the results screen.
+  - `InvoiceScan/approve.php` skips a letter already used today in the archive folder or in ZpendingDir.
+  - "המשך מקובץ OCRsanity" — `select_pdf_for_sanity.php` opens in the shop's `Invoices` folder on Z and may browse
+    the website or the archive (it was limited to the website, so archived PDFs couldn't be picked).
+- Results screen: `cleanup_results.php` shows the archive folder and files, files waiting for Z, problems, staying files;
+  4-second countdown to the next document — **stopped when there's a problem or files wait for Z** (a "המשך למסמך הבא" link instead).
 
 ### Resume from OCR Sanity File Feature
 
@@ -4198,6 +4278,11 @@ harmonizedFlow) is unchanged and stays as the fallback; the new one joins it at 
    (`InvoiceReader::detectMethod`), the columns, the rows, the rows sum against the printed totals.
 4. `approve.php` - the supplier entry in `suppliers.json` learns its `vatId` and the printed name
    (`aliases`); a new supplier is added. The document becomes `<Supplier> dd-mm-yy <Letter>.pdf`
+   — **dd-mm-yy is the processing day** ("יום עיבוד", since 22/11/2026; all documents of a day go on together,
+   as in the old flow's `processDate`), the letter the first free A–Z for that supplier on that day
+   (preProcessDir, that day's archive folder, ZpendingDir). The invoice's own date is required on confirm.php
+   (unclear → a date checked with the owner / supplier, or the processing day) and kept in the data:
+   OCRjson `invoice_date` → OCRsanity B3 (InvoiceDate). OCRsanity / OCRjson names follow the PDF's date —
    in preProcessDir (photos are put into a PDF with FPDF), the sources move to `TempPP`, an
    OCRjson is written to `AIocr/ocr_extracted`, the harmonizedFlow session is set and the browser
    goes to `harmonizedFlow/step4_create_ocr_sanity.php` -> the existing OCRsanity screen ->
@@ -4232,6 +4317,28 @@ reads plus a made-up header-less page (joined to the KA chocolate invoice, 3 pag
 real run. Restart: the 24 photos read before (12 WhatsApp 16/11 + 12 IMG) were copied back to
 preProcessDir from TempPP / Aside_16-11-26 (originals kept); `KAchocolate 27-04-26 A.pdf` (approved 16/11, mid-flow) moved to Aside_16-11-26; two unfinished old readings moved to
 `work/old_2026-11-20/`.
+
+**Reading progress (Nov 21):** 24 photos took ~2 min with no sign of life; the user closed the
+window — the reading had gone on and finished (`batch_e730d65107c6`, 24 pages, no errors, 17–39 s
+each) but nothing led back to it.
+- `InvoiceReader::readMany($docs, $shop, $parallel, $onDone)`: a rolling pool — always `$parallel`
+  (6) in flight, the next starts as one finishes (was: groups of 6, each waiting for its slowest);
+  `$onDone($key, $result, $done, $total)` after each; results in the given order.
+- `scan.php` (a batch): saves the batch first (with `files`), then streams a progress page — a bar,
+  "נקראו N מתוך M · עבר m:ss · נותר בערך m:ss", a row per file filled as it is read (supplier, date,
+  number, rows, seconds) — saving the batch after every file; `ignore_user_abort` + `finished`.
+  At the end: on to group.php / the documents (automatic unless some files failed).
+  `scan.php?resume=<batch>`: still reading → its count; read → group.php / build the documents.
+- index.php: "קריאות שלא הושלמו" (`scan_open_batches()`: batches without documents) with
+  "המשך לחלוקה למסמכים" — the 21/11 batch is there. Checked: readMany live on 3 photos + a missing
+  file (parallel 2: rolling, the error doesn't stop the rest); the streamed page itself not yet run.
+
+**Page order (Nov 21):** group.php has a "עמוד" choice per page next to "שייך ל"; the suggestion is
+`scan_page_rank()` — the printed page number, else a page with a header (1.5), a continuation page last
+(99) — and `scan_batch_build_docs($batch, $assign, $order)` sorts each document's pages by the user's
+choice, else the suggestion (ties keep the batch order). Before, the order was the printed numbers
+only when every page had one, else the file names — random for `IMG_<hash>.jpg`. Checked on the 21/11
+Akerman pair (page 1 / continuation suggested right) and the sort in isolation.
 
 **Not built yet:** skipping the approval screen when the identification is sure ("option B"),
 the commercial layer on CPD, new product / new price filled from CPD, a way back to the

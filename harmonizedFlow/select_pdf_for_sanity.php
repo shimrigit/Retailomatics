@@ -50,14 +50,18 @@ function getPdfFiles($directory, $maxDepth = 2, $currentDepth = 0) {
     return $pdfFiles;
 }
 
-// Get initial directory from query or default to uploads
-$currentDir = $_GET['dir'] ?? realpath(__DIR__ . '/../uploads');
-$currentDir = realpath($currentDir); // Sanitize path
-
-// Security: Ensure we're within the website directory
+// Where to look: the website, or the archive on Z (finished documents are archived there —
+// invoice_archive.php). It opens in the shop's Invoices folder on Z, else in the website.
+require_once __DIR__ . '/invoice_archive.php';
 $websiteRoot = realpath(__DIR__ . '/..');
-if (strpos($currentDir, $websiteRoot) !== 0) {
-    $currentDir = $websiteRoot . '/uploads';
+$archiveRoot = realpath(INV_ARCHIVE_ROOT) ?: null;
+$shopInvoices = realpath(INV_ARCHIVE_ROOT . '/' . basename($shopName) . '/Invoices') ?: null;
+$inRoots = function ($p) use ($websiteRoot, $archiveRoot) {
+    return $p && (strpos($p, $websiteRoot) === 0 || ($archiveRoot && strpos($p, $archiveRoot) === 0));
+};
+$currentDir = isset($_GET['dir']) ? realpath($_GET['dir']) : ($shopInvoices ?: realpath(INV_PENDING_DIR) ?: $websiteRoot);
+if (!$inRoots($currentDir)) {
+    $currentDir = $shopInvoices ?: $websiteRoot;
 }
 
 // Get all PDF files from current directory only (no subdirectories)
@@ -70,7 +74,7 @@ usort($pdfFiles, function($a, $b) {
 
 // Get parent directories for navigation
 $parentDir = dirname($currentDir);
-$canGoUp = (strpos($parentDir, $websiteRoot) === 0);
+$canGoUp = $parentDir !== $currentDir && $inRoots($parentDir);
 
 // Get subdirectories
 $subdirectories = [];
@@ -254,6 +258,10 @@ if ($items !== false) {
             <?php if ($canGoUp): ?>
                 <a href="?dir=<?php echo urlencode($parentDir); ?>" class="dir-button parent">⬆️ Go Up</a>
             <?php endif; ?>
+            <?php if ($shopInvoices): ?>
+                <a href="?dir=<?php echo urlencode($shopInvoices); ?>" class="dir-button">🗄 ארכיון החשבוניות של <?php echo htmlspecialchars($shopName); ?> (Z)</a>
+            <?php endif; ?>
+            <a href="?dir=<?php echo urlencode($websiteRoot); ?>" class="dir-button">🌐 website</a>
 
             <?php if (!empty($subdirectories)): ?>
                 <div class="directory-list">

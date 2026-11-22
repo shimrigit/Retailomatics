@@ -151,7 +151,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['chp_search'])) {
         $chpResults = $client->searchPrices($searchBarcode, $searchCity);
         ob_end_clean(); // Discard the output
 
-        if (!$chpResults || empty($chpResults['prices'])) {
+        if (!empty($chpResults['suffixMatches'])) {
+            $chpError = 'הסיומת ' . $searchBarcode . ' מתאימה ל-' . count($chpResults['suffixMatches']) . ' מוצרים — בחר את המוצר:';
+        } elseif (!$chpResults || empty($chpResults['prices'])) {
             $chpError = 'לא נמצאו תוצאות עבור הברקוד והעיר שהוזנו';
         }
     }
@@ -605,6 +607,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
         <div>
             <h1>🔍 Verify Price Changes</h1>
             <div class="file-info">File: <?= htmlspecialchars($pcFileName) ?> | Shop: <?= htmlspecialchars($shopName) ?></div>
+            <?php if (!empty($_SESSION['harmonizedFlow']['priceListLabel'])): ?><div class="file-info"><?= htmlspecialchars($_SESSION['harmonizedFlow']['priceListLabel']) ?></div><?php endif; ?>
         </div>
         <div>
             <button type="button" class="recalculate-button" id="recalculateBtn">
@@ -662,9 +665,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
                     <div class="error-message">
                         ⚠️ <?= htmlspecialchars($chpError) ?>
                     </div>
+                    <?php if (!empty($chpResults['suffixMatches'])): ?>
+                        <div class="suffix-list" style="margin:8px 0;font-size:14px">
+                            <?php foreach ($chpResults['suffixMatches'] as $sm): ?>
+                                <div><a href="#" class="suffix-pick" data-full-barcode="<?= htmlspecialchars($sm['barcode']) ?>" style="direction:ltr;display:inline-block"><?= htmlspecialchars($sm['barcode']) ?></a> — <?= htmlspecialchars($sm['name']) ?></div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
                 <?php endif; ?>
 
                 <?php if ($chpResults && !empty($chpResults['prices'])): ?>
+                    <?php if (!empty($chpResults['suffixOf'])): ?>
+                        <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:14px">נמצא לפי סיומת: <b dir="ltr"><?= htmlspecialchars($chpResults['suffixOf']) ?></b> ← ברקוד מלא <b dir="ltr"><?= htmlspecialchars($chpResults['barcode']) ?></b></div>
+                    <?php endif; ?>
                     <div class="chp-results">
                         <?php
                         // Calculate statistics
@@ -1067,6 +1080,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
             .catch(err => alert('❌ Error generating NP file: ' + err));
         });
         <?php endif; ?>
+
+        // Several barcodes end with the digits typed: a click searches the chosen full barcode.
+        document.getElementById('chpResultsContainer').addEventListener('click', e => {
+            const a = e.target.closest('.suffix-pick');
+            if (!a) return;
+            e.preventDefault();
+            document.getElementById('barcode').value = a.dataset.fullBarcode;
+            document.getElementById('chpSearchForm').requestSubmit();
+        });
     </script>
 </body>
 </html>

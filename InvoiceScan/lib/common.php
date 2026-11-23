@@ -96,7 +96,15 @@ function scan_load(string $id): array
 function scan_save(array $work): void
 {
     @mkdir(SCAN_WORK_DIR, 0777, true);
-    file_put_contents(scan_work_path($work['id']), json_encode($work, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+    scan_write_json(scan_work_path($work['id']), $work);
+}
+
+/** JSON to a file — never an empty one: bad UTF-8 (typed text) is replaced, and a failed encoding throws. */
+function scan_write_json(string $path, array $data): void
+{
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) throw new RuntimeException('שמירת ' . basename($path) . ' נכשלה: ' . json_last_error_msg());
+    file_put_contents($path, $json, LOCK_EX);
 }
 
 /** Full paths of a scan's source files, wherever they are now (preProcessDir or its TempPP). */
@@ -149,6 +157,19 @@ button:disabled{opacity:.5;cursor:wait}
 </style></head><body><header><b>Retailomatics Invoice Scan</b><span>' . scan_h($title) . '</span>'
         . (empty($_SESSION['invoiceScanBatch']) ? '' : '<a style="margin-inline-start:24px" href="batch.php?b=' . scan_h($_SESSION['invoiceScanBatch']) . '">רשימת המסמכים</a>')
         . '<a href="../harmonizedFlow/start_harmonized_flow.php">התהליך הקודם (Harmonized Flow)</a></header><main' . ($wide ? ' class="wide"' : '') . '>';
+    if (!empty($_SESSION['invoiceScanFlash'])) {   // one message from the step before (e.g. a document put aside)
+        echo '<div class="card" style="border-color:#9aa5b4;background:#f0f2f5">' . scan_h($_SESSION['invoiceScanFlash']) . '</div>';
+        unset($_SESSION['invoiceScanFlash']);
+    }
+}
+
+/** The form that puts a document aside (discard.php): asks for the reason, then posts. '' when it can't be (finished / put aside). */
+function scan_discard_button(array $work): string
+{
+    if (!empty($work['discarded']) || (!empty($work['approved']) && !is_file(SCAN_IN_DIR . '/' . $work['approved']['pdfFile']))) return '';
+    return '<form method="post" action="discard.php" style="display:inline" onsubmit="const r = prompt(\'להוציא את המסמך? הוא לא ייקלט לקומקס.\\nהקבצים יעברו לתיקיית Discard של יום העיבוד ב-Z.\\n\\nסיבה (לא חובה):\', \'\'); if (r === null) return false; this.reason.value = r;">'
+        . '<input type="hidden" name="id" value="' . scan_h($work['id']) . '"><input type="hidden" name="reason">'
+        . '<button type="submit" class="second" style="border-color:#b3261e;color:#b3261e">🗑 הוצא (לא לקומקס)</button></form>';
 }
 
 function scan_page_end(): void
@@ -183,7 +204,7 @@ function scan_batch_load(string $id): array
 function scan_batch_save(array $batch): void
 {
     @mkdir(SCAN_WORK_DIR, 0777, true);
-    file_put_contents(scan_batch_path($batch['id']), json_encode($batch, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+    scan_write_json(scan_batch_path($batch['id']), $batch);
 }
 
 /** Who issued a page, for grouping: the suppliers.json key, else the VAT id, else the printed name. Empty = unknown. */
@@ -285,7 +306,8 @@ function scan_batch_build_docs(array $batch, array $assign, array $order = []): 
 function scan_batch_next_url(array $batch): string
 {
     foreach ($batch['docs'] as $docId) {
-        if (empty(scan_load($docId)['approved'])) return 'confirm.php?id=' . $docId;
+        $w = scan_load($docId);
+        if (empty($w['approved']) && empty($w['discarded'])) return 'confirm.php?id=' . $docId;
     }
     return 'batch.php?b=' . $batch['id'];
 }

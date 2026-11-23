@@ -70,7 +70,11 @@
             "UnitPrice": 4,
             "LineTotal": 6,
             "Discount1": 5
-        }
+        },
+        "vatId": "511749574",
+        "aliases": [
+            "מחלבות גד, שיווק 1992 בע\"מ / GAD DAIRY CO LTD"
+        ]
     },
     {
         "supplierName": "Mayan",
@@ -101,7 +105,13 @@
     {
         "supplierName": "Berman",
         "OCRsanityMethod": "Simple",
-        "hebrewName": "ברמן"
+        "hebrewName": "ברמן",
+        "vatId": "510018187",
+        "aliases": [
+            "א.א ברמן בע\"מ מאפיית ברמן",
+            "י.א.א. ברמן בע\"מ מאפיית ברמן",
+            "י. א. ברמן בע\"מ מאפיית ברמן"
+        ]
     },
     {
         "supplierName": "StraussSweets",
@@ -571,7 +581,12 @@
             "Barcode": 3,
             "ItemName": 2,
             "Qty": 1
-        }
+        },
+        "vatId": "25326737",
+        "aliases": [
+            "יוסי שקורי",
+            "יוסי שקורי שיווק לחמים ומוצרי מאפה"
+        ]
     },
     {
         "supplierName": "Hebron",

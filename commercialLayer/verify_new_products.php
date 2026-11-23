@@ -46,6 +46,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $jsonInput = json_decode($rawInput, true);
         if ($jsonInput && isset($jsonInput['action'])) {
 
+        // ── skipNP: "דלג" — no new products from this document: the NP file is deleted ──
+        if ($jsonInput['action'] === 'skipNP') {
+            header('Content-Type: application/json');
+            $f = basename($npFileName);
+            $ok = preg_match('/^(.+_CL_\d{8}_\d{6})_NEW-PRODUCTS_\d{6}_\d{6}\.xlsx$/', $f, $m) && @unlink(__DIR__ . '/commercial_invoice_files/' . $f);
+            echo json_encode($ok ? ['success' => true, 'clFileName' => $m[1] . '.xlsx'] : ['success' => false, 'error' => 'מחיקת קובץ המוצרים החדשים נכשלה (פתוח באקסל?)']);
+            exit;
+        }
+
         // ── getData: return fresh NP table data (called after margin calculation) ──
         if ($jsonInput['action'] === 'getData') {
             header('Content-Type: application/json');
@@ -310,6 +319,22 @@ $npHeaders = array_values(array_slice($npData[0], 2));
                     💾 Save New Products File
                 </button>
             </form>
+            <button type="button" class="calculate-button" id="skipNpBtn" onclick="skipNP()" style="background:#6c757d" title="לא לשמור מוצרים חדשים מהמסמך הזה — הקובץ נמחק, וממשיכים לסיום">⏭ דלג (בלי מוצרים חדשים)</button>
+            <script>
+            function skipNP() {
+                if (!confirm('לדלג על המוצרים החדשים?\n\nקובץ המוצרים החדשים של המסמך הזה יימחק ולא ייכנס לקומקס.')) return;
+                const btn = document.getElementById('skipNpBtn');
+                btn.disabled = true;
+                fetch(window.location.href, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'skipNP' }) })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d.success) { alert('❌ ' + d.error); btn.disabled = false; return; }
+                        window.onbeforeunload = null;
+                        window.location.href = 'new_products_complete.php?skip=true&npSkipped=1&cl=' + encodeURIComponent(d.clFileName) + '&shop=' + encodeURIComponent(<?= json_encode($shopName) ?>);
+                    })
+                    .catch(err => { alert('❌ ' + err); btn.disabled = false; });
+            }
+            </script>
         </div>
         <div>
             <h1>🆕 Verify New Products</h1>

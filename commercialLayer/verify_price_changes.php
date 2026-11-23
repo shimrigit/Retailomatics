@@ -44,6 +44,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $rawInput = file_get_contents('php://input');
     if ($rawInput) {
         $jsonInput = json_decode($rawInput, true);
+        // "דלג": no price changes from this document — its PRICE-CHANGE file is deleted (the archive and
+        // BOpack then have none); the flow goes on to the new products as after "Continue".
+        if (($jsonInput['action'] ?? '') === 'skipPC') {
+            header('Content-Type: application/json');
+            $f = basename($pcFileName);
+            $ok = preg_match('/_PRICE-CHANGE_\d{6}_\d{6}\.xlsx$/', $f) && @unlink(__DIR__ . '/commercial_invoice_files/' . $f);
+            echo json_encode($ok ? ['success' => true, 'clFileName' => $_SESSION['clFileName'] ?? ''] : ['success' => false, 'error' => 'מחיקת קובץ שינויי המחיר נכשלה (פתוח באקסל?)']);
+            exit;
+        }
         if ($jsonInput && isset($jsonInput['action']) && $jsonInput['action'] === 'recalculate') {
             header('Content-Type: application/json');
             $changedRows = $jsonInput['changedRows'] ?? [];
@@ -619,6 +628,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
                     ➡️ Continue to New Product Process
                 </button>
             </form>
+            <button type="button" class="recalculate-button" id="skipPcBtn" onclick="skipPC()" style="background:#6c757d" title="לא לשמור שינויי מחיר מהמסמך הזה — הקובץ נמחק, וממשיכים למוצרים החדשים">⏭ דלג (בלי שינויי מחיר)</button>
         </div>
     </div>
 
@@ -1053,10 +1063,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
         }
 
         // ── Continue to NP process ──────────────────────────────────────────
-        <?php if (isset($_GET['continueToNP']) && $_GET['continueToNP'] == '1'): ?>
-        window.addEventListener('DOMContentLoaded', function() {
-            const clFileName = '<?= $_SESSION['clFileName'] ?? '' ?>';
-            const shopName   = '<?= $shopName ?>';
+        // The new products step. pcSkipped: the price changes were skipped (no PC file) — with no new
+        // products either, the end is the "nothing saved" page.
+        function startNP(pcSkipped) {
+            const clFileName = <?= json_encode($_SESSION['clFileName'] ?? '') ?>;
+            const shopName   = <?= json_encode($shopName) ?>;
             if (!clFileName) { alert('Error: CL file name not found'); return; }
             fetch('generate_np_file.php', {
                 method:  'POST',
@@ -1069,16 +1080,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize'])) {
                     if (data.hasNewProducts) {
                         alert('✅ New Products file created!\n\nProducts found: ' + data.newProductCount + '\nSupplier: ' + data.supplierHebrewName + '\n\nRedirecting to New Product verification...');
                         window.location.href = data.redirectUrl;
+                    } else if (pcSkipped) {
+                        alert('ℹ️ ' + data.message);
+                        window.location.href = 'new_products_complete.php?skip=true&cl=' + encodeURIComponent(clFileName) + '&shop=' + encodeURIComponent(shopName);
                     } else {
                         alert('ℹ️ ' + data.message);
-                        window.location.href = 'price_change_complete.php?pcFile=' + encodeURIComponent('<?= $pcFileName ?>') + '&shop=' + encodeURIComponent('<?= $shopName ?>') + '&cl=' + encodeURIComponent(clFileName) + '&noNP=true';
+                        window.location.href = 'price_change_complete.php?pcFile=' + encodeURIComponent(<?= json_encode($pcFileName) ?>) + '&shop=' + encodeURIComponent(shopName) + '&cl=' + encodeURIComponent(clFileName) + '&noNP=true';
                     }
                 } else {
                     alert('❌ Error: ' + data.error);
                 }
             })
             .catch(err => alert('❌ Error generating NP file: ' + err));
-        });
+        }
+
+        // "דלג": the PC file is deleted (nothing of this screen is kept), then on to the new products.
+        function skipPC() {
+            if (!confirm('לדלג על שינויי המחיר?\n\nקובץ שינויי המחיר של המסמך הזה יימחק ולא ייכנס לקומקס.\nממשיכים למוצרים החדשים.')) return;
+            const btn = document.getElementById('skipPcBtn');
+            btn.disabled = true; btn.textContent = '⏳ …';
+            fetch(window.location.href, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'skipPC' }) })
+                .then(r => r.json())
+                .then(d => {
+                    if (!d.success) { alert('❌ ' + d.error); btn.disabled = false; btn.textContent = '⏭ דלג (בלי שינויי מחיר)'; return; }
+                    dirtyRows.clear();   // nothing to save any more
+                    startNP(true);
+                })
+                .catch(err => { alert('❌ ' + err); btn.disabled = false; btn.textContent = '⏭ דלג (בלי שינויי מחיר)'; });
+        }
+
+        <?php if (isset($_GET['continueToNP']) && $_GET['continueToNP'] == '1'): ?>
+        window.addEventListener('DOMContentLoaded', () => startNP(false));
         <?php endif; ?>
 
         // Several barcodes end with the digits typed: a click searches the chosen full barcode.

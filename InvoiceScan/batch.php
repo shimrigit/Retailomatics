@@ -30,7 +30,8 @@ scan_page_start('רשימת המסמכים');
         ?>
             <tr>
                 <td><?= $i + 1 ?></td>
-                <td><?php if ($isPdf): ?><a href="confirm.php?id=<?= scan_h($docId) ?>">PDF</a>
+                <td><?php if (!empty($work['discarded'])): ?><span class="mute">🗑</span>
+                    <?php elseif ($isPdf): ?><a href="confirm.php?id=<?= scan_h($docId) ?>">PDF</a>
                     <?php else: ?><a href="confirm.php?id=<?= scan_h($docId) ?>" title="לתצוגה מול הנתונים"><img src="<?= scan_source_url($work, $first) ?>" alt="" loading="lazy" style="width:110px;border:1px solid #c8cdd5;border-radius:4px"></a><?php endif; ?></td>
                 <td><?php if (!empty($work['approved'])): ?><b><?= scan_h($work['approved']['supplier']) ?></b>
                     <?php elseif ($match['supplier']): ?><span class="ok">✔</span> <?= scan_h(($match['supplier']['hebrewName'] ?? '') . ' · ' . $match['supplier']['supplierName']) ?>
@@ -41,8 +42,14 @@ scan_page_start('רשימת המסמכים');
                 <td><?= count($work['files']) ?></td>
                 <td><?= count($d['items']) ?></td>
                 <td class="num"><?= $n(InvoiceReader::compareTotal($d)['value']) ?></td>
-                <td><?= !empty($work['approved']) ? '<span class="ok">✔ אושר</span><br><span class="mute" dir="ltr">' . scan_h($work['approved']['pdfFile']) . '</span>' : 'ממתין לאישור' ?></td>
-                <td><a class="btn<?= !empty($work['approved']) ? ' second' : '' ?>" href="confirm.php?id=<?= scan_h($docId) ?>"><?= !empty($work['approved']) ? 'פתח שוב' : 'בדיקה ואישור' ?></a></td>
+                <?php if (!empty($work['discarded'])): ?>
+                    <td><span class="mute">🗑 הוצא</span><?= $work['discarded']['reason'] !== '' ? '<br><span class="mute">' . scan_h($work['discarded']['reason']) . '</span>' : '' ?></td>
+                    <td><span class="mute"><?= $work['discarded']['where'] === 'pending' ? 'ממתין ל-Z' : 'ב-Z, Discard' ?></span></td>
+                <?php else: ?>
+                    <td><?= !empty($work['approved']) ? '<span class="ok">✔ אושר</span><br><span class="mute" dir="ltr">' . scan_h($work['approved']['pdfFile']) . '</span>' : 'ממתין לאישור' ?></td>
+                    <td style="white-space:nowrap"><a class="btn<?= !empty($work['approved']) ? ' second' : '' ?>" href="confirm.php?id=<?= scan_h($docId) ?>"><?= !empty($work['approved']) ? 'פתח שוב' : 'בדיקה ואישור' ?></a>
+                        <?= scan_discard_button($work) ?></td>
+                <?php endif; ?>
             </tr>
         <?php endforeach; ?>
     </table>

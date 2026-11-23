@@ -156,15 +156,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Get ReplaceBarcodeToERP setting from shop config (default to NO)
     $replaceBarcodeToERP = isset($shopConfig['ReplaceBarcodeToERP']) && strtoupper($shopConfig['ReplaceBarcodeToERP']) === 'YES';
 
+    // The shop's conversion table (code_map.php): a supplier's own code ("M3100") or a row without a
+    // code → the Comax code; not in the table → a new product gets the next free number. Q = the code
+    // as printed on the invoice (Retrieve learns from it when the user types the Comax code over it).
+    require_once __DIR__ . '/code_map.php';
+    $cmSupplier = trim((string) $sheet->getCell('B2')->getValue());
+    $cmPlCodes = cmPriceListCodes($priceListSheet, $plBarcodeCol, $plHighestRow);
+    $sheet->setCellValue('Q1', 'InvoiceCode');
+    $sheet->getStyle('Q1')->getFont()->setBold(true);
+    $cmRows = cmUpdate($shopName, function (array &$cm) use ($sheet, $clHighestRow, $cmSupplier, $cmPlCodes) {
+        cmConfirmArrived($cm, $cmPlCodes);
+        $out = [];
+        for ($n = 2; $n <= $clHighestRow; $n++) {
+            $printed = trim((string) $sheet->getCell("D{$n}")->getValue());
+            $name = trim((string) $sheet->getCell("E{$n}")->getValue());
+            if ($printed === '' && $name === '') continue;
+            $out[$n] = [$printed, cmResolve($cm, $cmSupplier, $printed, $name, $cmPlCodes)];
+        }
+        return $out;
+    }, !empty($isDemoMode));
+
     // Iterate through CL file rows (starting from row 2)
     for ($n = 2; $n <= $clHighestRow; $n++) {
-        // Get invoice barcode (IB) from column D
-        $ibOriginal = $sheet->getCell("D{$n}")->getValue();
-
-        // Skip empty rows
-        if ($ibOriginal === null || $ibOriginal === '') {
-            continue;
+        if (!isset($cmRows[$n])) continue;   // an empty row
+        [$cmPrinted, [$cmCode, $cmHow]] = $cmRows[$n];
+        $sheet->setCellValueExplicit("Q{$n}", $cmPrinted, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        if ($cmHow === 'none') continue;   // no code, not in the table — skipped, as always
+        if (isset(CM_FILL[$cmHow])) {
+            $sheet->setCellValueExplicit("D{$n}", $cmCode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            $sheet->getStyle("D{$n}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(CM_FILL[$cmHow]);
         }
+        // Get invoice barcode (IB) from column D
+        $ibOriginal = $cmCode;
 
         // Convert to string and remove any non-numeric characters for matching
         $ib = (string)$ibOriginal;
@@ -175,8 +198,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $matchType = null; // 'A' or 'B'
         $matchedERPBarcode = null; // Store the matched ERP barcode
 
+        // A code from the table / a number just given: only the same code. Not a barcode (M3100, none)
+        // and not converted: no match (its digits alone would match an unrelated barcode's end).
+        // The same code first (before: the first row whose end matched could be another product).
+        $cmExact = $cmHow === 'map' || $cmHow === 'new';
+        if ($cmHow !== 'internal' && $ib !== '' && isset($cmPlCodes[$ib])) {
+            for ($m = 2; $m <= $plHighestRow; $m++) {
+                if (preg_replace('/[^0-9]/', '', (string) $priceListSheet->getCell("{$plBarcodeCol}{$m}")->getValue()) === $ib) {
+                    $matchFound = true; $matchRow = $m; $matchedERPBarcode = $ib;
+                    break;
+                }
+            }
+        }
+
         // Search for matching barcode in Price List
-        for ($m = 2; $m <= $plHighestRow; $m++) {
+        for ($m = 2; !$matchFound && !$cmExact && $cmHow !== 'internal' && $ib !== '' && $m <= $plHighestRow; $m++) {
             $plbOriginal = $priceListSheet->getCell("{$plBarcodeCol}{$m}")->getValue();
 
             // Skip empty barcodes
@@ -221,8 +257,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
             }
-            // Case 3: IB shorter than 6 - pad with zeros and check suffix
-            elseif ($ibLen < 6) {
+            // Case 3: IB of 6 digits or fewer - pad to 6 with zeros and check suffix (6 itself was matched by no case: Berman 497112 → 7290000497112)
+            elseif ($ibLen <= 6) {
                 $ibPadded = str_pad($ib, 6, '0', STR_PAD_LEFT);
                 if (strlen($ibPadded) <= strlen($plb)) {
                     if (substr($plb, -6) === $ibPadded) {

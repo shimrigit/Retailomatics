@@ -387,6 +387,14 @@ try {
                 continue;
             }
 
+            // No cost in the price list AND no price on the invoice (a delivery note without prices):
+            // nothing to recommend from (was: a division by zero).
+            if ($actualUnitPrice <= 0) {
+                $pcSheet->setCellValue('O' . $row, 'NO - Missing invoice price');
+                $pcSheet->setCellValue('R' . $row, 'No cost in price list and no price on the invoice');
+                continue;
+            }
+
             // Use current SalesPrice as preliminary price (no PriceDiff available)
             $lowMarginBorder  = ($actualUnitPrice / (1 - $departmentMargin)) * 1.18;
             $highMarginBorder = ($actualUnitPrice / (1 - ($departmentMargin + $marginTolerance / 100))) * 1.18;

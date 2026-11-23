@@ -87,14 +87,15 @@ function invPlace(string $src, string $dir, string $name, bool $move): ?string
  * Store one file of a document: to the shop's archive on Z, or — Z unreachable — to the
  * waiting folder. ['where' => 'archive'|'pending', 'dir', 'name'], or ['error' => …].
  */
-function invArchiveStore(string $shop, string $src, string $name, bool $move, ?int $time = null): array
+function invArchiveStore(string $shop, string $src, string $name, bool $move, ?int $time = null, string $sub = ''): array
 {
     if (!is_file($src)) return ['error' => "הקובץ לא נמצא: " . basename($src)];
+    $sub = $sub !== '' ? '/' . basename($sub) : '';   // "Discard": a document put aside (InvoiceScan/discard.php)
     if (invArchiveReachable()) {
-        $dir = invArchiveDir($shop, $time);
+        $dir = invArchiveDir($shop, $time) . $sub;
         if (($n = invPlace($src, $dir, $name, $move)) !== null) return ['where' => 'archive', 'dir' => $dir, 'name' => $n];
     }
-    $dir = invPendingDir($shop, $time);
+    $dir = invPendingDir($shop, $time) . $sub;
     if (($n = invPlace($src, $dir, $name, $move)) !== null) return ['where' => 'pending', 'dir' => $dir, 'name' => $n];
     return ['error' => "לא ניתן לשמור את $name — לא ב-Z ולא בתיקיית ההמתנה"];
 }
@@ -108,8 +109,11 @@ function invPendingList(): array
         if ($shop === 'old') continue;
         foreach (glob($shopDir . '/*', GLOB_ONLYDIR) ?: [] as $dayDir) {
             if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', basename($dayDir))) continue;
-            foreach (scandir($dayDir) ?: [] as $f) {
-                if (is_file("$dayDir/$f")) $out[] = ['shop' => $shop, 'day' => basename($dayDir), 'name' => $f, 'path' => "$dayDir/$f"];
+            foreach (['', 'Discard'] as $sub) {   // Discard/: documents put aside, to the day's Discard folder
+                $dir = $dayDir . ($sub !== '' ? "/$sub" : '');
+                foreach (is_dir($dir) ? scandir($dir) : [] as $f) {
+                    if (is_file("$dir/$f")) $out[] = ['shop' => $shop, 'day' => basename($dayDir), 'sub' => $sub, 'name' => ($sub !== '' ? "$sub/" : '') . $f, 'file' => $f, 'path' => "$dir/$f"];
+                }
             }
         }
     }
@@ -124,14 +128,14 @@ function invPendingFlush(): array
     $moved = 0;
     $errors = [];
     foreach ($list as $p) {
-        $dir = invArchiveDir($p['shop'], strtotime($p['day'] . ' 12:00'));
-        if (invPlace($p['path'], $dir, $p['name'], true) !== null) $moved++;
+        $dir = invArchiveDir($p['shop'], strtotime($p['day'] . ' 12:00')) . ($p['sub'] !== '' ? '/' . $p['sub'] : '');
+        if (invPlace($p['path'], $dir, $p['file'], true) !== null) $moved++;
         else $errors[] = "{$p['shop']} / {$p['name']}: ההעברה נכשלה";
     }
     // the emptied folders
     foreach (glob(INV_PENDING_DIR . '/*', GLOB_ONLYDIR) ?: [] as $shopDir) {
         if (basename($shopDir) === 'old') continue;
-        foreach (glob($shopDir . '/*', GLOB_ONLYDIR) ?: [] as $dayDir) @rmdir($dayDir);
+        foreach (glob($shopDir . '/*', GLOB_ONLYDIR) ?: [] as $dayDir) { @rmdir("$dayDir/Discard"); @rmdir($dayDir); }
         @rmdir($shopDir);
     }
     return ['moved' => $moved, 'left' => count($list) - $moved, 'errors' => $errors];

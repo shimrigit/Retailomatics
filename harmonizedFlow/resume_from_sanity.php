@@ -42,6 +42,9 @@ $_SESSION['harmonizedFlow'] = [
     'sanityFilePath' => $sanityFilePath,
     'currentStep' => 'sanity_verify',
     'resumedFromFile' => true, // Flag to indicate this is a resumed session
+    // The processing day is the date in the name ("dd-mm-yyyy" = the day it was processed): the archive goes
+    // back to that day's folder (cleanup_process.php), not today's.
+    'workDay' => DateTime::createFromFormat('!d-m-Y', $processDate) ? DateTime::createFromFormat('!d-m-Y', $processDate)->format('Y-m-d') : '',
     'timestamp' => time()
 ];
 

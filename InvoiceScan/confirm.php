@@ -34,6 +34,12 @@ $batchDocs = !empty($work['batch']) ? (scan_batch_load($work['batch'])['docs'] ?
 $place = array_search($work['id'], $batchDocs, true);
 scan_page_start('בדיקה ואישור' . ($place !== false && count($batchDocs) > 1 ? ' · מסמך ' . ($place + 1) . ' מתוך ' . count($batchDocs) : ''), true);
 ?>
+<?php if (!empty($work['discarded'])): ?>
+    <div class="card" style="border-color:#b3261e;background:#fdecea">🗑 המסמך הזה הוצא (<?= scan_h(date('d/m/Y H:i', strtotime($work['discarded']['at']))) ?>) ולא ייקלט לקומקס.
+        הקבצים ב-<span dir="ltr"><?= scan_h($work['discarded']['dir']) ?></span>.
+        <a href="<?= !empty($work['batch']) ? 'batch.php?b=' . scan_h($work['batch']) : 'index.php' ?>">חזרה לרשימה</a></div>
+    <?php scan_page_end(); exit; ?>
+<?php endif; ?>
 <?php if (!empty($work['approved'])): ?>
     <div class="card" style="border-color:#d9a400;background:#fff8e1">המסמך הזה כבר אושר (<?= scan_h($work['approved']['pdfFile']) ?>).
         אישור נוסף ייצור מחדש את קובץ ה-OCRsanity לפי הבחירות שכאן.</div>
@@ -145,6 +151,9 @@ scan_page_start('בדיקה ואישור' . ($place !== false && count($batchDoc
             <a class="btn second" href="<?= !empty($work['batch']) ? 'batch.php?b=' . scan_h($work['batch']) : 'index.php' ?>">חזרה לרשימת המסמכים</a>
         </form>
         <form method="post" action="scan.php" id="again"><input type="hidden" name="id" value="<?= scan_h($work['id']) ?>"></form>
+        <?php if (scan_discard_button($work) !== ''): ?>
+            <div style="margin-top:10px"><?= scan_discard_button($work) ?> <span class="mute">מסמך שלא נקלט לקומקס (כפול, לא שייך לחנות, ישן…) — עובר ל-Discard של יום העיבוד ב-Z</span></div>
+        <?php endif; ?>
     </div>
 </div>
 <script>

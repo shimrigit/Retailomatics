@@ -971,7 +971,10 @@ window.addEventListener('DOMContentLoaded', function() {
             const ldcData = [];
 
             // Add header row - New order: Index, Qty, UnitPrice, Discount1, Discount2, Formula, LineTotal, Diff
-            ldcData.push(['Index', 'Qty', 'UnitPrice', 'Discount1', 'Discount2', 'Qty×Price/(1-D1%/100)/(1-D2%/100)', 'LineTotal', 'Diff']);
+            // The formula of the invoice's method (B6), as the server check (process_ocrsanity.php): Discount2 divides
+            // (the printed price is after the discounts); the others multiply (the price is before the discount).
+            const ldcMultiply = sanityMethod !== 'Discount2';
+            ldcData.push(['Index', 'Qty', 'UnitPrice', 'Discount1', 'Discount2', ldcMultiply ? 'Qty×Price×(1-D1%)×(1-D2%)' : 'Qty×Price/(1-D1%/100)/(1-D2%/100)', 'LineTotal', 'Diff']);
 
             // Process each data row (skip header row 0)
             for (let i = 1; i < currentData.length; i++) {
@@ -1001,8 +1004,8 @@ window.addEventListener('DOMContentLoaded', function() {
                 const discount2Str = String(row[9] || '0').replace(/,/g, '');
                 const discount2 = parseFloat(discount2Str) || 0;
 
-                // Calculate Formula: Qty × UnitPrice / (1 - Discount1/100) / (1 - Discount2/100)
-                const formulaResult = qty * unitPrice / (1 - discount1 / 100) / (1 - discount2 / 100);
+                const formulaResult = ldcMultiply ? qty * unitPrice * (1 - discount1 / 100) * (1 - discount2 / 100)
+                                                  : qty * unitPrice / (1 - discount1 / 100) / (1 - discount2 / 100);
 
                 // Calculate Diff (Formula - LineTotal)
                 const diff = formulaResult - lineTotal;
@@ -1104,7 +1107,7 @@ window.addEventListener('DOMContentLoaded', function() {
                     </div>
                     <div class="container">
                         <div class="info">
-                            💡 This table shows the difference between LineTotal and the Discount2 formula for each row. You can edit Qty, UnitPrice, Discount1, Discount2, and LineTotal values. Changed cells will be highlighted in light orange. Click "Re-calculate" to update the Formula and Diff based on your edits.
+                            💡 This table shows the difference between LineTotal and the formula of the invoice's method (${sanityMethod}) for each row. You can edit Qty, UnitPrice, Discount1, Discount2, and LineTotal values. Changed cells will be highlighted in light orange. Click "Re-calculate" to update the Formula and Diff based on your edits.
                         </div>
                         <div id="hot-container"></div>
                     </div>
@@ -1112,6 +1115,7 @@ window.addEventListener('DOMContentLoaded', function() {
                     <script>
                         const container = document.getElementById('hot-container');
                         const ldcData = ${JSON.stringify(ldcData)};
+                        const ldcMultiply = ${ldcMultiply};
 
                         // Track which cells have been manually changed
                         const changedCells = new Set();
@@ -1215,8 +1219,8 @@ window.addEventListener('DOMContentLoaded', function() {
                                 const discount2 = parseFloat(data[i][4]) || 0;
                                 const lineTotal = parseFloat(data[i][6]) || 0;
 
-                                // Calculate Formula: Qty × UnitPrice / (1 - Discount1/100) / (1 - Discount2/100)
-                                const formulaResult = qty * unitPrice / (1 - discount1 / 100) / (1 - discount2 / 100);
+                                const formulaResult = ldcMultiply ? qty * unitPrice * (1 - discount1 / 100) * (1 - discount2 / 100)
+                                                                  : qty * unitPrice / (1 - discount1 / 100) / (1 - discount2 / 100);
 
                                 // Calculate Diff (Formula - LineTotal)
                                 const diff = formulaResult - lineTotal;

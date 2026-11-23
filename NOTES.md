@@ -4340,6 +4340,49 @@ choice, else the suggestion (ties keep the batch order). Before, the order was t
 only when every page had one, else the file names — random for `IMG_<hash>.jpg`. Checked on the 21/11
 Akerman pair (page 1 / continuation suggested right) and the sort in isolation.
 
+**Putting a document aside (Nov 22):** "🗑 הוצא (לא לקומקס)" on batch.php (per row) and confirm.php — a document
+not approved yet, or approved and not finished (its PDF still in preProcessDir): then the PDF and the OCRjson go to
+Discard ("<base>.pdf", "<base> - OCRjson.json") and its OCRsanity / CL / PRICE-CHANGE / NEW-PRODUCTS files are
+deleted, so BOpack does not take it (first use: Gad 22-11-26 A, Nov 22). `discard.php` asks a reason (optional) and moves the source files to the processing
+day's `…\dd-mm-yy IN\Discard\` on Z as "<supplier> <number> - <original name>", with "<supplier> <number> - סיבה.txt"
+(when, day, supplier + VAT id, number, date, rows, reason). Z down → `ZpendingDir\<shop>\<day>\Discard\` (the
+pending list / flush now handle the Discard subfolder). The work file keeps `discarded`; the document leaves the
+lists and `scan_batch_next_url` skips it. Also: work / batch JSON are written by `scan_write_json` (bad UTF-8
+replaced, never an empty file — a failed encoding used to empty the work file).
+
+**Skip price changes / new products (Nov 22):** "⏭ דלג (בלי שינויי מחיר)" on verify_price_changes.php — the
+document's PRICE-CHANGE file is deleted (`action: skipPC`), then the new products step as after "Continue"
+(`startNP(true)`: no new products → new_products_complete.php?skip=true). "⏭ דלג (בלי מוצרים חדשים)" on
+verify_new_products.php — the NEW-PRODUCTS file is deleted (`action: skipNP`) → new_products_complete.php?skip=true&npSkipped=1
+(says whether a price-change file was kept). Cleanup / the archive / BOpack then simply find no such file.
+Also: the LineTotal Diff Check popup (verify_ocrsanity.php) used the Discount2 formula (÷) for every invoice; it now
+uses the invoice's method — Discount2 divides, the others multiply (as process_ocrsanity.php checks).
+
+**Supplier codes → Comax codes (Nov 22):** `commercialLayer/code_map.php`, a table per shop in
+`configDir/codemaps/<shop>.json` (git-ignored): supplier (OCRsanity B2 = the suppliers.json key) + the
+printed code (`M3100`), or "שם:<description>" for a row without a code → the shop's code in Comax.
+- CL (`process_commercial_layer.php`): column **Q `InvoiceCode`** = the code as printed. A row in the table →
+  D = its Comax code (light blue `BDD7EE`), matched only by the same code. A code with a letter not in the
+  table → a new product: the next free number after **"last"** (light green `C6EFCE`, "Not Found" → NP) —
+  numbers in the price list or already given are skipped (someone opened one in Comax by hand). Such a code
+  is never matched by the end of a barcode any more (before: `M3100` → "3100" → any barcode ending 003100).
+  A row without a code and not in the table is skipped, as before (may be a deposit / discount line).
+  Every code is now tried as the same code first, then by its end (before: the first row whose end matched).
+  A code of exactly 6 digits now matches by its end too (the cases were "< 6" and "both > 6": Berman's 497112 was
+  never matched to 7290000497112) — process_commercial_layer.php and retrieve_commercial_layer.php.
+- Retrieve (`retrieve_commercial_layer.php`): the user types the Comax code over a printed one → learned
+  ("confirmed"); the number we had given it is freed (`free`, given first next time, or `last`−1).
+  "חדש" / "+" in D → a new number, also for a row without a code. A number given is "new" until it appears
+  in the price list (the Comax items) → "confirmed".
+- **"last"** = the last number given, set on InvoiceScan's first screen ("מק"ט פנימי אחרון שהוקצה", per
+  shop, saved on change; default = the table's last) — `code_map_api.php`; the screen also lists the
+  numbers given and not yet in Comax. Not set → such a row stays "Not Found" for the user.
+- Writes under a lock (two runs never give the same number); a demo (`demoMode`) reads the table, writes nothing.
+- A copy on Z after every change: `Z:\RetailomaticsCloud\RetailomaticsArchive\<shop>\CodeMap\codemap.json` + one per
+  day (`codemap YYYY-MM-DD.json`). Z down → InvoiceScan's first screen warns, and opening it copies when Z is back.
+  The local file lost → read from Z's copy. YBC's "last" set to 1237 (Nov 22).
+- Open: what Comax does when a new product's code already exists (overwrite / reject) — to check once.
+
 **Not built yet:** skipping the approval screen when the identification is sure ("option B"),
 the commercial layer on CPD, new product / new price filled from CPD, a way back to the
 document list from the old screens (OCRsanity, commercial layer).

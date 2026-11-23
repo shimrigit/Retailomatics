@@ -161,9 +161,19 @@ if ($skip) {
         <?php if ($skip): ?>
             <h1>תהליך ה-Commercial Layer הושלם!</h1>
 
+            <?php
+            // What of this document is kept: a PRICE-CHANGE file of its CL (not skipped), and the NP skipped or not found.
+            $clBase = $clFileName ? pathinfo(basename($clFileName), PATHINFO_FILENAME) : '';
+            $pcKept = $clBase !== '' && glob(__DIR__ . '/commercial_invoice_files/' . preg_replace('/([*?\[])/', '[$1]', $clBase) . '_PRICE-CHANGE_*.xlsx');
+            ?>
             <div class="message">
-                לא נמצאו שינויי מחירים משמעותיים ומוצרים חדשים<br>
-                התהליך הושלם ללא יצירת קבצים נוספים
+                <?php if (!empty($_GET['npSkipped'])): ?>
+                    דילגת על המוצרים החדשים — קובץ המוצרים החדשים לא נשמר<br>
+                    <?= $pcKept ? 'קובץ שינויי המחיר נשמר' : 'אין קובץ שינויי מחיר' ?>
+                <?php else: ?>
+                    לא נשמרו שינויי מחיר ולא מוצרים חדשים<br>
+                    התהליך הושלם ללא יצירת קבצים נוספים
+                <?php endif; ?>
             </div>
 
             <div class="file-info">

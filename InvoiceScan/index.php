@@ -101,7 +101,51 @@ scan_page_start('בחירת מסמכים');
             <input type="date" name="day" value="<?= scan_h(scan_day_or_today($_SESSION['invoiceScanDay'] ?? '')) ?>" required>
         </label>
         <small class="mute">היום שבו המסמכים נקלטים לקומקס — לא התאריך שעל החשבוניות. לפיו נשמרים בארכיון ("dd-mm-yy IN").</small>
+        <!-- New products without a barcode (the supplier's own code, M3100) get the next free number
+             after this one — commercialLayer/code_map.php. Saved per shop on change. -->
+        <div id="cmBox" style="margin-top:12px;display:none">
+            <label>מק"ט פנימי אחרון שהוקצה:
+                <input id="cmLast" inputmode="numeric" style="width:110px" dir="ltr">
+            </label>
+            <span id="cmMsg"></span>
+            <div class="mute" style="margin-top:4px">מוצר חדש בלי ברקוד (קוד של הספק כמו M3100) יקבל את המספר הפנוי הבא אחריו — מדלגים על מספר שכבר קיים בקומקס.
+                המרה קיימת (ספק + קוד ← מק"ט בקומקס) נלקחת מהטבלה של החנות.</div>
+            <div id="cmPending" style="margin-top:4px"></div>
+        </div>
     </div>
+    <script>
+    (function () {
+        const shopSel = document.getElementById('shop'), box = document.getElementById('cmBox'), inp = document.getElementById('cmLast');
+        const msg = document.getElementById('cmMsg'), pend = document.getElementById('cmPending');
+        const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+        function show(r) {
+            if (!r.ok) { msg.className = 'warn'; msg.textContent = '✘ ' + r.error; return; }
+            inp.value = r.last ?? '';
+            if (r.last === null) { msg.className = 'warn'; msg.textContent = 'לא הוגדר — בלי מספר, מוצר כזה יישאר "Not Found" לתיקון ידני'; }
+            pend.innerHTML = r.pending.length
+                ? '<span class="warn">ממתינים לקומקס (הוקצו, עדיין לא ברשימת הפריטים):</span> '
+                  + r.pending.map(p => `${esc(p.code)} — ${esc(p.name)} <span class="mute">(${esc(p.supplier)} ${esc(p.key)}, ${esc(p.since)})</span>`).join(' · ')
+                : (r.count ? `<span class="mute">${r.count} המרות בטבלה של החנות</span>` : '');
+            if (r.z === false) pend.innerHTML += `<div class="warn">⚠ אין עותק מעודכן של הטבלה ב-Z (<span dir="ltr">${esc(r.zDir)}</span>) — Z לא זמין? יועתק בשינוי הבא או בפתיחה הבאה של המסך.</div>`;
+        }
+        async function load() {
+            msg.textContent = ''; msg.className = '';
+            if (!shopSel.value) { box.style.display = 'none'; return; }
+            box.style.display = '';
+            try { show(await (await fetch('../commercialLayer/code_map_api.php?shop=' + encodeURIComponent(shopSel.value))).json()); }
+            catch (e) { msg.className = 'warn'; msg.textContent = '✘ ' + e.message; }
+        }
+        inp.addEventListener('change', async () => {
+            try {
+                const r = await (await fetch('../commercialLayer/code_map_api.php', { method: 'POST', body: new URLSearchParams({ shop: shopSel.value, last: inp.value.trim() }) })).json();
+                show(r);
+                if (r.ok) { msg.className = 'ok'; msg.textContent = '✔ נשמר'; }
+            } catch (e) { msg.className = 'warn'; msg.textContent = '✘ ' + e.message; }
+        });
+        shopSel.addEventListener('change', load);
+        load();
+    })();
+    </script>
     <!-- The shop's price list for the commercial layer: made from the newest items file the Comax
          Gateway downloaded ("ייצוא פריטים מורחב") — commercialLayer/update_price_list.php. -->
     <div class="card" id="plCard" style="display:none">
@@ -162,7 +206,7 @@ scan_page_start('בחירת מסמכים');
             <div class="files">
                 <?php foreach ($files as $f): $isPdf = strtolower(pathinfo($f, PATHINFO_EXTENSION)) === 'pdf'; ?>
                     <label class="file">
-                        <?php if ($isPdf): ?><div class="pdf">PDF</div>
+                        <?php if ($isPdf): ?><div class="pdf" data-src="../preProcessDir/<?= rawurlencode($f) ?>">PDF</div>
                         <?php else: ?><img loading="lazy" src="../preProcessDir/<?= rawurlencode($f) ?>" alt=""><?php endif; ?>
                         <span><input type="checkbox" name="files[]" value="<?= scan_h($f) ?>"> <?= scan_h($f) ?></span>
                     </label>
@@ -174,6 +218,7 @@ scan_page_start('בחירת מסמכים');
 <!-- The large view of one file: opened by a click on its thumbnail. -->
 <style>
 .file img,.file .pdf{cursor:zoom-in}
+.file .pdf canvas{width:100%;height:100%;object-fit:cover;object-position:top;border-radius:4px;background:#fff}
 #view{display:none;position:fixed;inset:0;background:rgba(20,26,38,.88);z-index:8;flex-direction:column}
 #view.on{display:flex}
 #view .top{background:#fff;padding:8px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -212,6 +257,35 @@ document.getElementById('f').addEventListener('submit', () => {
     document.getElementById('busy').classList.add('on');
 });
 refresh();
+
+// PDF thumbnails: the browser cannot show a PDF in an <img>, so pdf.js draws its first page onto a canvas
+// (one at a time). Without the library (no internet) the gray "PDF" box stays.
+(function pdfThumbs() {
+    const boxesPdf = [...document.querySelectorAll('.file .pdf[data-src]')];
+    if (!boxesPdf.length) return;
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload = async () => {
+        const lib = window.pdfjsLib;
+        if (!lib) return;
+        lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        for (const box of boxesPdf) {
+            try {
+                const doc = await lib.getDocument(box.dataset.src).promise;
+                const page = await doc.getPage(1);
+                const base = page.getViewport({ scale: 1 });
+                const vp = page.getViewport({ scale: Math.min(2, 520 / base.width) });
+                const c = document.createElement('canvas');
+                c.width = vp.width; c.height = vp.height;
+                await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+                box.textContent = '';
+                box.appendChild(c);
+                doc.destroy();
+            } catch (e) { /* the gray box stays */ }
+        }
+    };
+    document.head.appendChild(s);
+})();
 
 // The large view.
 const view = document.getElementById('view'), vBody = document.getElementById('vBody'), vPick = document.getElementById('vPick');

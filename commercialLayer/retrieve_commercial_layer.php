@@ -149,29 +149,77 @@ try {
         $clSheet->getCell("D{$n}")->getStyle()->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_NONE);
     }
 
+    // The shop's conversion table (code_map.php). D as it is now (the user may have typed over it):
+    // not a barcode (M3100) → the table, else a new number; "חדש" / "+" → a new number (also a row
+    // without a code); a code that is the table's for this row's printed code (Q) → matched exactly.
+    require_once __DIR__ . '/code_map.php';
+    $cmSupplier = trim((string) $clSheet->getCell('B2')->getValue());
+    $cmHasQ = trim((string) $clSheet->getCell('Q1')->getValue()) === 'InvoiceCode';
+    $cmPlCodes = cmPriceListCodes($plSheet, $plBarcodeCol, $plHighestRow);
+    $cmRows = cmUpdate($shopName, function (array &$cm) use ($clSheet, $highestRow, $cmSupplier, $cmHasQ, $cmPlCodes) {
+        cmConfirmArrived($cm, $cmPlCodes);
+        // First what the user typed over a printed code (a Comax code, the same in the price list):
+        // learned before new numbers are given, so a number it frees is given again at once.
+        for ($n = 2; $cmHasQ && $n <= $highestRow; $n++) {
+            $d = preg_replace('/[^0-9]/', '', trim((string) $clSheet->getCell("D{$n}")->getValue()));
+            $printed = trim((string) $clSheet->getCell("Q{$n}")->getValue());
+            $name = trim((string) $clSheet->getCell("E{$n}")->getValue());
+            if ($d === '' || !isset($cmPlCodes[$d]) || cmIsInternal(trim((string) $clSheet->getCell("D{$n}")->getValue()))) continue;
+            $pd = preg_replace('/[^0-9]/', '', $printed);
+            $same = $pd !== '' && (str_ends_with($d, $pd) || str_ends_with($pd, $d) || str_ends_with($d, str_pad($pd, 6, '0', STR_PAD_LEFT)));
+            if (cmIsInternal($printed) || !$same) cmLearn($cm, $cmSupplier, cmKey($printed, $name), $d, $name);
+        }
+        $out = [];
+        for ($n = 2; $n <= $highestRow; $n++) {
+            $d = trim((string) $clSheet->getCell("D{$n}")->getValue());
+            if ($d === '') continue;
+            $printed = $cmHasQ ? trim((string) $clSheet->getCell("Q{$n}")->getValue()) : '';
+            $name = trim((string) $clSheet->getCell("E{$n}")->getValue());
+            if ($d === 'חדש' || $d === '+') {
+                $out[$n] = cmResolve($cm, $cmSupplier, $printed, $name, $cmPlCodes, true);
+            } elseif (cmIsInternal($d)) {
+                $out[$n] = cmResolve($cm, $cmSupplier, $d, $name, $cmPlCodes);
+            } else {
+                $hit = $cmHasQ ? cmLookup($cm, $cmSupplier, cmKey($printed, $name)) : null;
+                $out[$n] = [$d, $hit && (string) $hit['code'] === $d ? 'map' : ''];
+            }
+        }
+        return $out;
+    }, $isDemoMode);
+    $cmLearn = [];   // [row, code] — the user typed a Comax code over a printed code that is not it
+
     // Step 2: Start from row 2 (skip header) and re-match barcodes
     for ($n = 2; $n <= $highestRow; $n++) {
-        // Get barcode from column D
-        $ibOriginal = $clSheet->getCell("D{$n}")->getValue();
-
-        if (empty($ibOriginal)) {
-            continue;
+        if (!isset($cmRows[$n])) continue;
+        [$cmCode, $cmHow] = $cmRows[$n];
+        if (isset(CM_FILL[$cmHow])) {
+            $clSheet->setCellValueExplicit("D{$n}", $cmCode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            $clSheet->getStyle("D{$n}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(CM_FILL[$cmHow]);
+            $updatedCells[] = ['row' => $n - 1, 'col' => 3, 'value' => $cmCode, 'background' => '#' . substr(CM_FILL[$cmHow], 2)];
         }
+        $ibOriginal = $cmCode;
 
         // Convert to string and remove any non-numeric characters for matching
         $ib = (string)$ibOriginal;
         $ib = preg_replace('/[^0-9]/', '', $ib);
-
-        if (empty($ib)) {
-            continue;
-        }
 
         // Search for matching barcode in Price List
         $matchFound = false;
         $matchRow = null;
         $matchedERPBarcode = null; // Store the matched ERP barcode
 
-        for ($m = 2; $m <= $plHighestRow; $m++) {
+        // The same code first; a code from the table / a new number: only the same code; not a barcode: none.
+        $cmExact = $cmHow === 'map' || $cmHow === 'new';
+        if ($cmHow !== 'internal' && $ib !== '' && isset($cmPlCodes[$ib])) {
+            for ($m = 2; $m <= $plHighestRow; $m++) {
+                if (preg_replace('/[^0-9]/', '', (string) $plSheet->getCell("{$plBarcodeCol}{$m}")->getValue()) === $ib) {
+                    $matchFound = true; $matchRow = $m; $matchedERPBarcode = $ib;
+                    break;
+                }
+            }
+        }
+
+        for ($m = 2; !$matchFound && !$cmExact && $cmHow !== 'internal' && $ib !== '' && $m <= $plHighestRow; $m++) {
             $plbOriginal = $plSheet->getCell("{$plBarcodeCol}{$m}")->getValue();
 
             // Convert to string and remove any non-numeric characters for matching
@@ -208,8 +256,8 @@ try {
                     }
                 }
             }
-            // Case 3: IB shorter than 6 - pad with zeros and check suffix
-            elseif ($ibLen < 6) {
+            // Case 3: IB of 6 digits or fewer - pad to 6 with zeros and check suffix (6 itself was matched by no case: Berman 497112 → 7290000497112)
+            elseif ($ibLen <= 6) {
                 $ibPadded = str_pad($ib, 6, '0', STR_PAD_LEFT);
                 if (strlen($ibPadded) <= strlen($plb)) {
                     if (substr($plb, -6) === $ibPadded) {
@@ -224,6 +272,16 @@ try {
 
         if ($matchFound) {
             // Borders already cleared at the beginning - no need to clear here
+
+            // The user typed a Comax code over the printed one (M3100, none, or the supplier's own
+            // number — not just a shorter form of the same barcode): the table learns it.
+            if ($cmHow === '' && $cmHasQ) {
+                $p = trim((string) $clSheet->getCell("Q{$n}")->getValue());
+                $pd = preg_replace('/[^0-9]/', '', $p);
+                $same = $pd !== '' && (str_ends_with($matchedERPBarcode, $pd) || str_ends_with($pd, $matchedERPBarcode)
+                    || str_ends_with($matchedERPBarcode, str_pad($pd, 6, '0', STR_PAD_LEFT)));
+                if (cmIsInternal($p) || !$same) $cmLearn[] = [$n, $p, $matchedERPBarcode];
+            }
 
             // Check if we should replace the invoice barcode with ERP barcode
             if ($replaceBarcodeToERP && $ib !== $matchedERPBarcode) {
@@ -373,6 +431,15 @@ try {
                 'background' => null
             ];
         }
+    }
+
+    if ($cmLearn) {
+        cmUpdate($shopName, function (array &$cm) use ($cmLearn, $clSheet, $cmSupplier) {
+            foreach ($cmLearn as [$n, $printed, $code]) {
+                $name = trim((string) $clSheet->getCell("E{$n}")->getValue());
+                cmLearn($cm, $cmSupplier, cmKey($printed, $name), $code, $name);
+            }
+        }, $isDemoMode);
     }
 
     // Save the file

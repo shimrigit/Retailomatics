@@ -222,6 +222,7 @@ $invoiceSheet->setCellValue('C1', 'supplierCode');
 $invoiceSheet->setCellValue('D1', 'invoiceNum');
 $invoiceSheet->setCellValue('E1', 'invoiceSum');
 $invoiceSheet->setCellValue('F1', 'remark');
+$invoiceSheet->setCellValue('G1', 'uploadFile'); // which invoice_to_upload file this row is (the Comax Gateway loads by it)
 
 $rowNum = 2;
 
@@ -275,12 +276,16 @@ foreach ($clFiles as $clFile) {
     $invoiceSheet->setCellValueExplicit("D{$rowNum}", $cellB1, DataType::TYPE_STRING); // Invoice Number
     $invoiceSheet->setCellValue("E{$rowNum}", $cellB4); // Invoice Sum
     $invoiceSheet->setCellValue("F{$rowNum}", $cellB5); // Remark
+    // The invoice_to_upload file of this row: same signature and extension as STEP 2 writes.
+    if (preg_match('/OCRsanity_([A-Za-z0-9]+_\d{2}-\d{2}-\d{4}_[A-Z])/', $clFile['name'], $sigMatch)) {
+        $invoiceSheet->setCellValue("G{$rowNum}", "invoice_to_upload_{$sigMatch[1]}." . ($backOfficeType === 'All4shops' ? 'csv' : 'xlsx'));
+    }
 
     $rowNum++;
 }
 
 // Auto-size columns
-foreach (range('A', 'F') as $col) {
+foreach (range('A', 'G') as $col) {
     $invoiceSheet->getColumnDimension($col)->setAutoSize(true);
 }
 
